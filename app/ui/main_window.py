@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QApplication,
     QFormLayout,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -25,14 +25,14 @@ from PySide6.QtWidgets import (
 
 from app.config.settings import AppSettings, ConfigurationStore
 from app.core.engine import JobEngine
-from app.core.jobs import Job, JobStatus
+from app.core.monitoring import ResourceMonitor
+from app.core.resources import ResourceLimits, ResourceManager, ResourceProfile
 from app.ui.dashboard import DashboardPage
 from app.ui.database_page import DatabaseChangesPage
 from app.ui.images_page import ImagesPage
-from app.ui.offline_page import OfflinePage
-from app.ui.online_page import OnlinePipelinePage
 from app.ui.server_page import ServerConnectionPage
-from app.ui.safety_page import SafetyPage
+from app.ui.monitoring import DashboardMonitor
+from app.ui.product_pages import BackupsPage, JobsPage as ProductJobsPage, LiveLogsPage, RecoveryPage, ScanPage
 
 
 class PlaceholderPage(QWidget):
@@ -48,95 +48,6 @@ class PlaceholderPage(QWidget):
         layout.addWidget(heading)
         layout.addWidget(text)
         layout.addStretch()
-
-
-class JobsPage(QWidget):
-    """Persistent history and recovery actions without running work on the UI thread."""
-
-    def __init__(self, engine: JobEngine) -> None:
-        super().__init__()
-        self.engine = engine
-        root = QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 24)
-        heading = QLabel("Jobs & History")
-        heading.setObjectName("pageHeading")
-        root.addWidget(heading)
-        root.addWidget(QLabel("Unfinished jobs are recovered from the durable checkpoint database at startup."))
-        self.jobs = QListWidget()
-        root.addWidget(self.jobs, 1)
-        actions = QHBoxLayout()
-        for text, callback in (
-            ("Start new job", self._create), ("Resume", self._resume),
-            ("Pause", self._pause), ("Cancel", self._cancel), ("Inspect", self._inspect),
-        ):
-            button = QPushButton(text)
-            button.clicked.connect(callback)
-            actions.addWidget(button)
-        actions.addStretch()
-        root.addLayout(actions)
-        self.refresh()
-
-    def refresh(self) -> None:
-        self.jobs.clear()
-        for job in self.engine.repository.list_jobs():
-            item = QListWidgetItem(
-                f"{job.status.value:<12}  {job.target}  ·  {job.files_completed}/{job.files_total} files  ·  {job.created_at[:19]}"
-            )
-            item.setData(Qt.UserRole, job.id)
-            self.jobs.addItem(item)
-
-    def _selected(self) -> Job | None:
-        current = self.jobs.currentItem()
-        return self.engine.repository.get(str(current.data(Qt.UserRole))) if current else None
-
-    def _create(self) -> None:
-        target, accepted = QInputDialog.getText(self, "New job", "Website or target identifier:")
-        if accepted and target.strip():
-            try:
-                job = self.engine.create_job(target)
-                self.engine.transition(job.id, JobStatus.PRECHECK)
-            except Exception as exc:
-                QMessageBox.warning(self, "Cannot start job", str(exc))
-            self.refresh()
-
-    def _resume(self) -> None:
-        job = self._selected()
-        if job:
-            try:
-                self.engine.resume(job.id)
-            except Exception as exc:
-                QMessageBox.warning(self, "Cannot resume job", str(exc))
-            self.refresh()
-
-    def _pause(self) -> None:
-        job = self._selected()
-        if job:
-            try:
-                self.engine.pause(job.id)
-            except Exception as exc:
-                QMessageBox.warning(self, "Cannot pause job", str(exc))
-            self.refresh()
-
-    def _cancel(self) -> None:
-        job = self._selected()
-        if job:
-            try:
-                self.engine.cancel(job.id)
-            except Exception as exc:
-                QMessageBox.warning(self, "Cannot cancel job", str(exc))
-            self.refresh()
-
-    def _inspect(self) -> None:
-        job = self._selected()
-        if not job:
-            return
-        checkpoint = self.engine.repository.last_safe_checkpoint(job.id)
-        QMessageBox.information(
-            self, "Job details",
-            f"ID: {job.id}\nTarget: {job.target}\nState: {job.status.value}\n"
-            f"Progress: {job.progress:.1f}%\nLast safe checkpoint: "
-            f"{checkpoint['operation'] if checkpoint else 'None'}",
-        )
 
 
 class SettingsPage(QWidget):
@@ -166,6 +77,15 @@ class SettingsPage(QWidget):
         self.workers = QSpinBox()
         self.workers.setRange(1, 64)
         self.workers.setValue(settings.max_workers)
+        self.resource_profile = QComboBox()
+        self.resource_profile.addItems(["ECO", "BALANCED", "PERFORMANCE", "CUSTOM"])
+        self.resource_profile.setCurrentText(settings.resource_profile)
+        self.download_workers = QSpinBox(); self.download_workers.setRange(1, 16)
+        self.download_workers.setValue(settings.max_download_workers)
+        self.upload_workers = QSpinBox(); self.upload_workers.setRange(1, 16)
+        self.upload_workers.setValue(settings.max_upload_workers)
+        self.server_connections = QSpinBox(); self.server_connections.setRange(1, 16)
+        self.server_connections.setValue(settings.max_server_connections)
         self.retries = QSpinBox()
         self.retries.setRange(1, 20)
         self.retries.setValue(settings.retry_count)
@@ -191,6 +111,10 @@ class SettingsPage(QWidget):
         form.addRow("Theme", self.theme)
         form.addRow("Optimization profile", self.profile)
         form.addRow("Maximum workers", self.workers)
+        form.addRow("Resource profile", self.resource_profile)
+        form.addRow("Download workers", self.download_workers)
+        form.addRow("Upload workers", self.upload_workers)
+        form.addRow("Server connection limit", self.server_connections)
         form.addRow("Retry attempts", self.retries)
         form.addRow("Maximum image pixels", self.max_pixels)
         form.addRow("Processing timeout", self.timeout)
@@ -209,6 +133,10 @@ class SettingsPage(QWidget):
         self.settings.theme = self.theme.currentText()
         self.settings.default_optimization_profile = self.profile.currentText()
         self.settings.max_workers = self.workers.value()
+        self.settings.resource_profile = self.resource_profile.currentText()
+        self.settings.max_download_workers = self.download_workers.value()
+        self.settings.max_upload_workers = self.upload_workers.value()
+        self.settings.max_server_connections = self.server_connections.value()
         self.settings.retry_count = self.retries.value()
         self.settings.optimization_max_pixels = self.max_pixels.value() * 1_000_000
         self.settings.optimization_timeout_seconds = float(self.timeout.value())
@@ -222,6 +150,12 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: AppSettings, store: ConfigurationStore, engine: JobEngine | None = None) -> None:
         super().__init__()
         self.store = store
+        self._resources = None
+        if engine:
+            limits = ResourceLimits(settings.max_workers, settings.optimization_max_pixels,
+                ResourceProfile(settings.resource_profile), settings.max_download_workers,
+                settings.max_workers, settings.max_upload_workers, settings.max_server_connections)
+            self._resources = ResourceManager(limits)
         self.setWindowTitle("ImageForge — Website Image Optimization")
         self.resize(1180, 760)
         shell = QWidget()
@@ -242,36 +176,33 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(tagline)
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
-        for label in ("Dashboard", "Offline Optimization", "Online Pipeline", "Database Review", "Final Safety", "Server Connection", "Images", "Jobs & History", "Logs", "Settings"):
+        for label in ("Dashboard", "Servers", "Scan", "Images", "Jobs", "Database", "Backups", "Recovery", "Logs", "Settings"):
             QListWidgetItem(label, self.navigation)
         side_layout.addWidget(self.navigation, 1)
-        version = QLabel("Phase 10  •  Final Safety")
+        version = QLabel("IMAGEFORGE  •  PROFESSIONAL")
         version.setObjectName("versionLabel")
         side_layout.addWidget(version)
 
         self.pages = QStackedWidget()
         self.dashboard = DashboardPage()
         self.pages.addWidget(self.dashboard)
-        if engine:
-            self.pages.addWidget(OfflinePage(Path(settings.project_data_path), engine, settings))
-        else:
-            self.pages.addWidget(PlaceholderPage("Offline Optimization", "Job engine is not connected."))
-        self.online_page = OnlinePipelinePage()
-        self.pages.addWidget(self.online_page)
-        self.database_page = DatabaseChangesPage()
-        self.pages.addWidget(self.database_page)
-        self.safety_page = SafetyPage()
-        self.pages.addWidget(self.safety_page)
         self.pages.addWidget(ServerConnectionPage(Path(settings.project_data_path)))
+        if engine:
+            self.scan_page = ScanPage(Path(settings.project_data_path), engine, settings, self._resources)
+            self.pages.addWidget(self.scan_page)
+        else:
+            self.pages.addWidget(PlaceholderPage("Scan", "Job engine is not connected."))
         if engine:
             from app.database.inventory import InventoryRepository
             self.pages.addWidget(ImagesPage(InventoryRepository(engine.repository)))
         else:
             self.pages.addWidget(PlaceholderPage("Images", "Image inventory is not connected."))
-        self.pages.addWidget(
-            JobsPage(engine) if engine else PlaceholderPage("Jobs & History", "Job engine is not connected.")
-        )
-        self.pages.addWidget(PlaceholderPage("Logs", f"Application logs are stored in {Path(settings.project_data_path) / 'logs'}."))
+        self.pages.addWidget(ProductJobsPage(engine, Path(settings.project_data_path)) if engine
+                             else PlaceholderPage("Jobs", "Job engine is not connected."))
+        self.database_page = DatabaseChangesPage(); self.pages.addWidget(self.database_page)
+        self.pages.addWidget(BackupsPage(engine) if engine else PlaceholderPage("Backups", "Backup state is unavailable."))
+        self.pages.addWidget(RecoveryPage(engine) if engine else PlaceholderPage("Recovery", "Recovery state is unavailable."))
+        self.pages.addWidget(LiveLogsPage(engine) if engine else PlaceholderPage("Logs", "Event stream is unavailable."))
         settings_page = SettingsPage(settings)
         settings_page.saved.connect(self._save_settings)
         self.pages.addWidget(settings_page)
@@ -281,10 +212,25 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(shell)
         self.statusBar().showMessage("Ready  •  ProjectData connected")
+        self._monitor_thread = None
+        if engine:
+            monitor = DashboardMonitor(engine.repository, self._resources,
+                ResourceMonitor.system(Path(settings.project_data_path)))
+            thread = QThread(self); monitor.moveToThread(thread); thread.started.connect(monitor.run)
+            monitor.snapshot.connect(self.dashboard.update_snapshot)
+            monitor.failed.connect(lambda message: self.statusBar().showMessage(message, 5000))
+            self._monitor_thread, self._monitor = thread, monitor; thread.start()
 
     def _save_settings(self, settings: AppSettings) -> None:
         self.store.save(settings)
+        from app.ui.theme import stylesheet
+        QApplication.instance().setStyleSheet(stylesheet(settings.theme))
         self.statusBar().showMessage("Settings saved", 4000)
 
     def show_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)
+
+    def closeEvent(self, event) -> None:
+        if self._monitor_thread:
+            self._monitor.stop(); self._monitor_thread.quit(); self._monitor_thread.wait(1500)
+        super().closeEvent(event)

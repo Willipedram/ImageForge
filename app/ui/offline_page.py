@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from app.config.settings import AppSettings
 from app.core.engine import JobEngine
+from app.core.resources import ResourceManager
 from app.database.decisions import DecisionManifestRepository
 from app.database.offline import OfflineRepository
 from app.database.optimization import OptimizationRepository
@@ -57,7 +58,8 @@ class OfflineWorker(QObject):
 
 
 class OfflinePage(QWidget):
-    def __init__(self, project_data: Path, engine: JobEngine, settings: AppSettings) -> None:
+    def __init__(self, project_data: Path, engine: JobEngine, settings: AppSettings,
+                 resources: ResourceManager | None = None) -> None:
         super().__init__()
         self.engine = engine
         self.offline_repository = OfflineRepository(engine.repository)
@@ -73,7 +75,7 @@ class OfflinePage(QWidget):
         )
         self.workflow = OfflineWorkflow(
             project_data, engine,
-            OfflineOptimizer(project_data, optimization_repository, config),
+            OfflineOptimizer(project_data, optimization_repository, config, resources=resources),
             self.offline_repository,
         )
         self.manifests = DecisionManifestRepository(engine.repository)

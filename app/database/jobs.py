@@ -267,7 +267,7 @@ class JobRepository:
             row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return self._job(row) if row else None
 
-    def list_jobs(self, unfinished_only: bool = False) -> list[Job]:
+    def list_jobs(self, unfinished_only: bool = False, limit: int | None = None) -> list[Job]:
         query = "SELECT * FROM jobs"
         parameters: tuple[Any, ...] = ()
         if unfinished_only:
@@ -275,6 +275,9 @@ class JobRepository:
             query += f" WHERE status IN ({','.join('?' for _ in values)})"
             parameters = values
         query += " ORDER BY created_at DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (*parameters, max(1, limit))
         with self.connection() as connection:
             rows = connection.execute(query, parameters).fetchall()
         return [self._job(row) for row in rows]

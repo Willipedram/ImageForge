@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from itertools import islice
-
 from PySide6.QtWidgets import (
     QComboBox, QGridLayout, QHBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
@@ -47,9 +45,9 @@ class ImagesPage(QWidget):
             self.summary_labels[key] = label
             summary_grid.addWidget(label, index // 4, index % 4)
         root.addLayout(summary_grid)
-        self.table = QTableWidget(0, 9)
+        self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels(
-            ["Filename", "Format", "Dimensions", "Size", "Class", "Alpha", "Animated", "Relationship", "Status"]
+            ["Thumbnail", "Original", "Selected", "Format", "Original size", "Final size", "Saving", "Decision", "Confidence", "Status"]
         )
         self.table.setSortingEnabled(False)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -75,20 +73,14 @@ class ImagesPage(QWidget):
         }
         for key, value in values.items():
             self.summary_labels[key].setText(f"{key}: {value}")
-        records = list(islice(
-            self.inventory.iter_records(str(job_id), filter_name=str(self.filter.currentData())),
-            self.PAGE_SIZE + 1,
-        ))
+        records = self.inventory.browser_page(str(job_id), filter_name=str(self.filter.currentData()), limit=self.PAGE_SIZE + 1)
         visible = records[:self.PAGE_SIZE]
         self.table.setRowCount(len(visible))
         for row, record in enumerate(visible):
-            fields = (
-                record.filename, record.detected_format or "UNKNOWN",
-                f"{record.width}×{record.height}" if record.width and record.height else "—",
-                str(record.size), record.asset_class.value, "Yes" if record.has_alpha else "No",
-                "Yes" if record.is_animated else "No", record.derivative_kind or "Original",
-                record.skip_reason or ("Suspicious" if record.suspicious else "Ready"),
-            )
+            fields = ("▧", record.original_path, record.selected_path or "Original retained", record.format,
+                str(record.original_bytes), str(record.final_bytes),
+                f"{record.savings_bytes / record.original_bytes * 100:.1f}%" if record.original_bytes else "0%",
+                record.decision, record.confidence, record.status)
             for column, value in enumerate(fields):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         self.notice.setText(

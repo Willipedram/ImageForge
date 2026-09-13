@@ -49,13 +49,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     from PySide6.QtWidgets import QApplication
     from app.ui.main_window import MainWindow
-    from app.ui.theme import STYLESHEET
+    from app.ui.theme import stylesheet
 
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
     application = QApplication(sys.argv if argv is None else [sys.argv[0], *argv])
     application.setApplicationName("ImageForge")
     application.setOrganizationName("ImageForge")
-    application.setStyleSheet(STYLESHEET)
+    application.setStyleSheet(stylesheet(settings.theme))
     repository = JobRepository(Path(settings.project_data_path) / "jobs" / "state.db")
     repository.initialize()
     engine = JobEngine(repository, RetryPolicy(

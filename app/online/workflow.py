@@ -13,6 +13,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from app.core.engine import JobEngine
 from app.core.jobs import JobStatus
+from app.core.resources import ResourceManager
 from app.database.online import OnlineRepository
 from app.image.intelligence import detect_format
 from app.image.optimization_models import OptimizationDecision
@@ -50,12 +51,14 @@ class OnlineWorkflow:
     def __init__(self, project_data: Path, engine: JobEngine, server: RemoteServer,
                  optimizer: OfflineOptimizer, updater: ReferenceUpdater,
                  repository: OnlineRepository | None = None,
-                 sleeper: Callable[[float], None] = time.sleep, finalizer=None) -> None:
+                 sleeper: Callable[[float], None] = time.sleep, finalizer=None,
+                 resources: ResourceManager | None = None) -> None:
         self.project_data = project_data.resolve()
         self.engine, self.server, self.optimizer, self.updater = engine, server, optimizer, updater
         self.repository = repository or OnlineRepository(engine.repository)
         self.sleeper = sleeper
         self.finalizer = finalizer
+        self.resources = resources
 
     def create(self, target: str, remote_root: str = "/") -> str:
         root = normalize_remote_path(remote_root)
@@ -160,7 +163,11 @@ class OnlineWorkflow:
             part = local.with_name(local.name + ".part")
             item.status, item.local_path = OnlineItemStatus.DOWNLOADING, str(local)
             self.repository.save_item(item)
-            self._remote(item, lambda: self.server.download(item.remote_path, part))
+            if self.resources:
+                with self.resources.reserve_pool("download"):
+                    self._remote(item, lambda: self.server.download(item.remote_path, part))
+            else:
+                self._remote(item, lambda: self.server.download(item.remote_path, part))
             local_hash = self._checksum(part)
             remote_hash = self._remote(item, lambda: self.server.checksum(item.remote_path))
             if remote_hash and remote_hash.casefold() != local_hash:
@@ -234,7 +241,11 @@ class OnlineWorkflow:
             self._mkdirs(item, posixpath.dirname(staging))
             if item.status in {OnlineItemStatus.BACKED_UP, OnlineItemStatus.READY, OnlineItemStatus.UPLOADING}:
                 item.status = OnlineItemStatus.UPLOADING; self.repository.save_item(item)
-                self._remote(item, lambda: self.server.upload(candidate, staging))
+                if self.resources:
+                    with self.resources.reserve_pool("upload"):
+                        self._remote(item, lambda: self.server.upload(candidate, staging))
+                else:
+                    self._remote(item, lambda: self.server.upload(candidate, staging))
                 item.status, item.upload_status = OnlineItemStatus.STAGED, "UPLOADED"
                 self.repository.save_item(item)
             if not self._remote_matches(item, staging):

@@ -33,6 +33,10 @@ class AppSettings:
     theme: str = "system"
     default_optimization_profile: str = "safe"
     max_workers: int = 4
+    resource_profile: str = "BALANCED"
+    max_download_workers: int = 2
+    max_upload_workers: int = 2
+    max_server_connections: int = 3
     retry_count: int = 3
     retry_base_delay_seconds: float = 1.0
     retry_maximum_delay_seconds: float = 60.0
@@ -51,6 +55,12 @@ class AppSettings:
     def validate(self) -> None:
         if self.max_workers < 1 or self.max_workers > 64:
             raise ValueError("max_workers must be between 1 and 64")
+        if self.resource_profile not in {"ECO", "BALANCED", "PERFORMANCE", "CUSTOM"}:
+            raise ValueError("resource_profile is invalid")
+        if min(self.max_download_workers, self.max_upload_workers, self.max_server_connections) < 1:
+            raise ValueError("worker and connection limits must be positive")
+        if self.max_download_workers + self.max_upload_workers > self.max_server_connections * 2:
+            raise ValueError("worker limits are inconsistent with the server connection limit")
         if self.retry_count < 1 or self.retry_count > 20:
             raise ValueError("retry_count must be between 1 and 20")
         if self.retry_base_delay_seconds < 0 or self.retry_maximum_delay_seconds < 0:

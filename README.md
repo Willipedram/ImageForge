@@ -1,6 +1,6 @@
 # ImageForge
 
-ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–10 provide durable jobs, remote discovery, image intelligence, auditable decisions, local-folder optimization, and a checkpointed production deployment pipeline.
+ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–11 provide durable jobs, remote discovery, image intelligence, auditable decisions, local-folder optimization, and a checkpointed production deployment pipeline.
 
 ## Architecture
 
@@ -109,6 +109,16 @@ Cleanup is idempotent after crashes: a restart reconciles committed authorizatio
 
 Backup retention is explicit and supports 7 days, 30 days, 90 days, or never. `never` performs no deletion. The retention service only removes expired backups for terminal jobs when directly invoked with a finite policy; it refuses symlinks and paths outside ProjectData. Source replacement never deletes ProjectData automatically.
 
+## Professional dashboard and live monitoring
+
+Phase 11 reorganizes the native interface into **Dashboard, Servers, Scan, Images, Jobs, Database, Backups, Recovery, Logs, and Settings**. Offline and online workflows share the Scan workspace, while operational history, recovery, database review, and backup state remain focused pages. Tables use hard result limits or paged repositories; image rows show the original and selected representation, format, original/final sizes, savings, decision, confidence, and status without eagerly decoding thumbnail collections. Jobs show ID, target, date, status, files, savings, duration, and application version, with view, resume, cancel, rollback-request, and JSON export actions.
+
+The dashboard receives immutable snapshots from a dedicated `QThread`; the Qt main thread performs no system sampling or unbounded job query. It displays current job, overall progress, processed/remaining files, original/final sizes, savings and reduction, current stage, elapsed time, remaining time, clock ETA, CPU, RAM, disk, bidirectional network throughput, active/allocated workers, and individual estimates for Scan, Download, Optimize, Upload, Database, Verification, and Cleanup. ETA remains **Calculating ETA...** until measured or historical rates exist. The estimator uses recent weighted samples, bytes, pixels, format, workers, current stage, and completed-stage history rather than fixed durations.
+
+Resource profiles are **ECO, BALANCED, PERFORMANCE, and CUSTOM**, with BALANCED as the default. A shared adaptive manager owns independent download, optimization, and upload scheduling gates plus a global server-connection gate. High RAM or extreme CPU pressure immediately reduces future scheduling; available CPU/RAM/network capacity increases one worker at a time within configured limits. Active work is never killed when a limit shrinks—it finishes at the next safe boundary—so responsiveness and checkpoint guarantees are preserved.
+
+The live Logs page shows a bounded event stream using INFO, OK, WARNING, ERROR, CRITICAL, SKIPPED, and RESUMED labels and trims old rendered blocks. Light and dark themes use a consistent Segoe UI visual system, compact cards, restrained color, and immediate theme switching. Resource sampling is provided by `psutil`; all production dependencies are installed with the standard package command below.
+
 ## Installation and running
 
 Python 3.11 or newer is recommended.
@@ -155,4 +165,4 @@ Keep UI work on the Qt main thread and all expensive or blocking work in workers
 
 ## Roadmap
 
-Phase 10 completes guarded cleanup and job-ID rollback. Future work may add provider-specific cache purge integrations, but cache invalidation will remain explicit and independently verified. Raster-to-vector conversion remains out of scope.
+Phase 11 adds the production monitoring and adaptive desktop experience on top of guarded cleanup and job-ID rollback. Future work may add provider-specific cache purge integrations, but cache invalidation will remain explicit and independently verified. Raster-to-vector conversion remains out of scope.

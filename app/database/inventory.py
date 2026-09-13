@@ -23,6 +23,20 @@ class InventorySummary:
     skipped: int
 
 
+@dataclass(frozen=True, slots=True)
+class BrowserImage:
+    filename: str
+    original_path: str
+    selected_path: str | None
+    format: str
+    original_bytes: int
+    final_bytes: int
+    savings_bytes: int
+    decision: str
+    confidence: str
+    status: str
+
+
 class InventoryRepository:
     COLUMNS = (
         "job_id", "remote_path", "filename", "extension", "detected_format", "mime_type", "size",
@@ -119,6 +133,28 @@ class InventoryRepository:
             ).fetchall())
         values = [int(value or 0) for value in totals]
         return InventorySummary(values[0], values[1], formats, *values[2:])
+
+    def browser_page(self, job_id: str, *, filter_name: str = "all", limit: int = 250) -> tuple[BrowserImage, ...]:
+        where, parameters = "1=1", []
+        if filter_name.startswith("format:"):
+            where, parameters = "inventory.detected_format=?", [filter_name.split(":", 1)[1].upper()]
+        elif filter_name == "optimized": where = "results.decision='SELECTED'"
+        elif filter_name == "skipped": where = "COALESCE(results.decision,'SKIPPED')!='SELECTED'"
+        elif filter_name == "transparent": where = "inventory.has_alpha=1"
+        elif filter_name == "animated": where = "inventory.is_animated=1"
+        elif filter_name == "derivatives": where = "inventory.parent_path IS NOT NULL"
+        elif filter_name == "suspicious": where = "inventory.suspicious=1"
+        with self.jobs.connection() as connection:
+            rows = connection.execute(f"""SELECT inventory.filename,inventory.remote_path,
+                results.candidate_path,COALESCE(results.candidate_format,inventory.detected_format,'UNKNOWN') format,
+                inventory.size,COALESCE(results.candidate_bytes,inventory.size) final_bytes,
+                COALESCE(results.savings_bytes,0) savings_bytes,COALESCE(results.decision,'PENDING') decision,
+                COALESCE(results.confidence,'—') confidence,COALESCE(results.validation_reason,inventory.skip_reason,'Ready') status
+                FROM image_inventory inventory LEFT JOIN optimization_results results
+                ON results.job_id=inventory.job_id AND results.original_path=inventory.remote_path
+                WHERE inventory.job_id=? AND {where} ORDER BY inventory.id LIMIT ?""",
+                (job_id, *parameters, limit)).fetchall()
+        return tuple(BrowserImage(*row) for row in rows)
 
     @staticmethod
     def _record(row: sqlite3.Row) -> ImageRecord:
