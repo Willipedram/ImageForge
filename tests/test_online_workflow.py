@@ -109,6 +109,19 @@ def test_full_online_pipeline_preserves_original_and_persists_manifest(online):
     assert workflow.engine.repository.get(job_id).status is JobStatus.COMPLETED
 
 
+def test_scan_only_populates_remote_inventory_without_downloading_or_writing(online):
+    workflow, server, updater, _ = online
+    before_files = dict(server.files)
+    job_id = workflow.create("scan-only.test", "/")
+    stages = []
+    report = workflow.scan_only(job_id, lambda stage, done, total, item: stages.append(stage))
+    assert report.total == 1
+    assert next(workflow.manifest(job_id)).status is OnlineItemStatus.DISCOVERED
+    assert workflow.engine.repository.get(job_id).status is JobStatus.PAUSED
+    assert "Scanning website" in stages
+    assert server.files == before_files and not updater.prepared and not updater.applied
+
+
 def test_upload_retries_without_touching_original(online):
     workflow, server, _, _ = online; server.fail_upload_once = True
     job_id = workflow.create("retry.test")

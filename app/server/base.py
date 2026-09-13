@@ -90,3 +90,6 @@ class RemoteServer(ABC):
     def read_prefix(self, path: str, maximum_bytes: int) -> bytes:
         """Read only enough leading bytes for metadata inspection."""
         ...
+
+    def forget_credentials(self) -> None:
+        """Release runtime authentication material after a UI operation."""

@@ -61,11 +61,14 @@ class DiscoveryWorker(QObject):
 
 
 class ServerConnectionPage(QWidget):
+    connection_verified = Signal(object, object, object)
+
     def __init__(self, project_data: Path, credential_provider: CredentialProvider | None = None) -> None:
         super().__init__()
         self.project_data = project_data
         self._thread: QThread | None = None
         self._pending_credentials: RuntimeCredentials | None = None
+        self._pending_config: ConnectionConfig | None = None
         if credential_provider is not None:
             self.credential_provider = credential_provider
         elif sys.platform == "win32":
@@ -148,6 +151,7 @@ class ServerConnectionPage(QWidget):
             verify_tls=self.strict_security.isChecked(), verify_host_key=self.strict_security.isChecked(),
         )
         credentials = RuntimeCredentials(self.username.text(), self.password.text())
+        self._pending_config = config
         self._pending_credentials = credentials
         self.password.clear()
         self.test_button.setEnabled(False)
@@ -183,6 +187,8 @@ class ServerConnectionPage(QWidget):
             self.remote_root.setText(report.discovery.site_root or report.discovery.search_root)
         if report.discovery and report.discovery.wordpress:
             site = report.discovery
+            if self._pending_config and self._pending_credentials:
+                self.connection_verified.emit(self._pending_config, self._pending_credentials, site)
             lines.extend([
                 "", "WordPress discovered",
                 f"Site root: {site.site_root}", f"Content: {site.wp_content}",
@@ -190,6 +196,7 @@ class ServerConnectionPage(QWidget):
                 f"Plugins: {site.plugins or 'Not found'}",
                 f"WooCommerce: {'Yes' if site.woocommerce else 'No'}",
                 f"Elementor: {'Yes' if site.elementor else 'No'}",
+                "", "✓ Website scanner configured — open Scan > Website and click Scan website.",
             ])
         elif report.discovery:
             lines.extend(["", *self._discovery_help(report.discovery)])

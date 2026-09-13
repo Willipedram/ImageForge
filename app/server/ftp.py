@@ -60,6 +60,9 @@ class FTPServer(RemoteServer):
             except (OSError, EOFError, ftplib.Error):
                 client.close()
 
+    def forget_credentials(self) -> None:
+        self._credentials = RuntimeCredentials("", "")
+
     def _require(self) -> ftplib.FTP:
         if not self._client:
             raise ConnectionFailed("The remote connection is not open.")

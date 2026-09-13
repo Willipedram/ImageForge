@@ -27,7 +27,8 @@ class ScanPage(QWidget):
     def __init__(self, project_data: Path, engine: JobEngine, settings, resources=None) -> None:
         super().__init__(); layout = QVBoxLayout(self); layout.setContentsMargins(28, 24, 28, 24)
         _heading(layout, "Scan", "Choose an offline folder or continue a verified online website workflow.")
-        self.tabs = QTabWidget(); self.offline = OfflinePage(project_data, engine, settings, resources); self.online = OnlinePipelinePage()
+        self.tabs = QTabWidget(); self.offline = OfflinePage(project_data, engine, settings, resources)
+        self.online = OnlinePipelinePage(project_data, engine, resources)
         self.tabs.addTab(self.offline, "Local folder"); self.tabs.addTab(self.online, "Website")
         layout.addWidget(self.tabs)
 

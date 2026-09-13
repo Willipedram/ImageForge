@@ -186,9 +186,11 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.dashboard = DashboardPage()
         self.pages.addWidget(self.dashboard)
-        self.pages.addWidget(ServerConnectionPage(Path(settings.project_data_path)))
+        self.server_page = ServerConnectionPage(Path(settings.project_data_path))
+        self.pages.addWidget(self.server_page)
         if engine:
             self.scan_page = ScanPage(Path(settings.project_data_path), engine, settings, self._resources)
+            self.server_page.connection_verified.connect(self.scan_page.online.configure_connection)
             self.pages.addWidget(self.scan_page)
         else:
             self.pages.addWidget(PlaceholderPage("Scan", "Job engine is not connected."))

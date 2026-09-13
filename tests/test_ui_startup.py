@@ -13,6 +13,8 @@ from app.ui.main_window import MainWindow
 from app.ui.server_page import ServerConnectionPage
 from app.ui.theme import stylesheet
 from app.server.base import RuntimeCredentials
+from app.server.base import ConnectionConfig, Protocol
+from app.server.discovery import SiteDiscovery
 
 
 def test_main_window_constructs(tmp_path, qapp):
@@ -31,6 +33,12 @@ def test_main_window_constructs(tmp_path, qapp):
         "Dashboard", "Servers", "Scan", "Images", "Jobs", "Database", "Backups", "Recovery", "Logs", "Settings"
     ]
     assert "files_remaining" in window.dashboard.cards and "network" in window.dashboard.cards
+    window.server_page.connection_verified.emit(
+        ConnectionConfig(Protocol.FTP, "example.test", 21),
+        RuntimeCredentials("user", "secret"),
+        SiteDiscovery("/", "/", True, uploads="/wp-content/uploads"),
+    )
+    assert window.scan_page.online.stage.text().startswith("Ready to scan")
     window.close()
 
 

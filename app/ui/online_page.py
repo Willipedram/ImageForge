@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 import time
+from dataclasses import replace
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar,
                                QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from app.core.jobs import JobStatus
 from app.online.workflow import OnlineWorkflow
+from app.server import ConnectionConfig, RuntimeCredentials, create_server
+from app.utils.checkpoints import log_keypoint
+
+logger = logging.getLogger(__name__)
 
 
 class OnlineWorker(QObject):
@@ -21,15 +29,22 @@ class OnlineWorker(QObject):
 
     @Slot()
     def run(self) -> None:
-        try: self.finished.emit(self.workflow.run(self.job_id, self.progressed.emit))
-        except Exception as exc: self.failed.emit(f"{type(exc).__name__}: {exc}")
+        try:
+            self.finished.emit(self.workflow.scan_only(self.job_id, self.progressed.emit))
+        except Exception as exc:
+            log_keypoint(logger, "website_scan", "stopped", job_id=self.job_id, error=exc)
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+        finally:
+            self.workflow.server.forget_credentials()
 
 
 class OnlinePipelinePage(QWidget):
     """Displays byte/file telemetry while all network work runs on a QThread."""
 
-    def __init__(self) -> None:
+    def __init__(self, project_data: Path | None = None, engine=None, resources=None) -> None:
         super().__init__(); self.workflow = None; self.job_id = None; self._thread = None; self.started = 0.0
+        self.project_data, self.engine, self.resources = project_data, engine, resources
+        self._connection: tuple[ConnectionConfig, RuntimeCredentials, object] | None = None
         root = QVBoxLayout(self); root.setContentsMargins(28, 24, 28, 24)
         title = QLabel("Online Website Pipeline"); title.setObjectName("pageHeading"); root.addWidget(title)
         root.addWidget(QLabel("Verified staging uploads and database reference changes; remote originals are retained."))
@@ -43,7 +58,7 @@ class OnlinePipelinePage(QWidget):
         root.addWidget(panel)
         self.progress = QProgressBar(); root.addWidget(self.progress)
         actions = QHBoxLayout()
-        self.start_button = QPushButton("Start / Resume"); self.start_button.setObjectName("primaryButton")
+        self.start_button = QPushButton("Scan website"); self.start_button.setObjectName("primaryButton")
         self.pause_button, self.cancel_button = QPushButton("Pause"), QPushButton("Cancel")
         for button in (self.start_button, self.pause_button, self.cancel_button): actions.addWidget(button)
         actions.addStretch(); root.addLayout(actions)
@@ -54,12 +69,39 @@ class OnlinePipelinePage(QWidget):
     def configure(self, workflow: OnlineWorkflow, job_id: str) -> None:
         self.workflow, self.job_id = workflow, job_id; self.stage.setText("Ready")
 
+    @Slot(object, object, object)
+    def configure_connection(self, config: ConnectionConfig, credentials: RuntimeCredentials, discovery) -> None:
+        if self.job_id and self.engine:
+            previous = self.engine.repository.get(self.job_id)
+            if previous and previous.status is JobStatus.PAUSED:
+                self.engine.cancel(self.job_id)
+        root = discovery.site_root or config.remote_root
+        self._connection = (replace(config, remote_root=root), credentials, discovery)
+        self.workflow = self.job_id = None
+        self.stage.setText(f"Ready to scan {discovery.uploads}")
+        self.current.setText("Connection verified on Servers page")
+        self.start_button.setText("Scan website")
+        self.start_button.setEnabled(True)
+
     def _start(self) -> None:
-        if not self.workflow or not self.job_id or (self._thread and self._thread.isRunning()): return
+        if self._thread and self._thread.isRunning():
+            return
+        if not self.workflow or not self.job_id:
+            if not self._connection or not self.project_data or not self.engine:
+                self.stage.setText("Not configured")
+                self.current.setText("First open Servers and run Test & discover successfully.")
+                return
+            config, credentials, discovery = self._connection
+            server = create_server(config, credentials)
+            self.workflow = OnlineWorkflow(
+                self.project_data, self.engine, server, None, None, resources=self.resources
+            )
+            self.job_id = self.workflow.create(config.host, discovery.site_root or config.remote_root)
+            self._connection = None
         self.started = time.monotonic(); thread = QThread(self); worker = OnlineWorker(self.workflow, self.job_id); worker.moveToThread(thread)
         thread.started.connect(worker.run); worker.progressed.connect(self._progressed); worker.finished.connect(self._finished)
         worker.failed.connect(self._failed); worker.finished.connect(thread.quit); worker.failed.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater); thread.finished.connect(lambda: self.start_button.setEnabled(True))
+        thread.finished.connect(worker.deleteLater); thread.finished.connect(lambda: self.start_button.setEnabled(False))
         self._thread, self._worker = thread, worker; self.start_button.setEnabled(False); thread.start()
 
     @Slot(str, int, int, str)
@@ -70,11 +112,17 @@ class OnlinePipelinePage(QWidget):
 
     @Slot(object)
     def _finished(self, report) -> None:
-        self.stage.setText("Completed"); self.bytes.setText(f"{report.bytes_downloaded} B / {report.bytes_uploaded} B")
+        self.stage.setText("Website scan completed (no remote files changed)"); self.bytes.setText(f"{report.bytes_downloaded} B / {report.bytes_uploaded} B")
         self.retries.setText(str(report.retries)); self.errors.setText(str(report.failed)); self._refresh()
+        self.start_button.setEnabled(False)
+        self.start_button.setText("Reconnect to scan again")
 
     @Slot(str)
-    def _failed(self, message) -> None: self.stage.setText("Recoverable error"); self.current.setText(message); self._refresh()
+    def _failed(self, message) -> None:
+        self.stage.setText("Scan failed — reconnect on Servers to retry")
+        self.current.setText(message)
+        self.start_button.setText("Reconnect to scan again")
+        self._refresh()
 
     def _refresh(self) -> None:
         if not self.workflow or not self.job_id: return

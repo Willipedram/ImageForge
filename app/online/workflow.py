@@ -91,6 +91,17 @@ class OnlineWorkflow:
         finally:
             self.server.disconnect()
 
+    def scan_only(self, job_id: str,
+                  progress: Callable[[str, int, int, str], None] | None = None) -> OnlineReport:
+        """Discover and persist the remote image inventory without modifying the server."""
+        try:
+            self._precheck_discover_scan(job_id, progress)
+            if self.engine.repository.get(job_id).status is JobStatus.DOWNLOADING:
+                self.engine.pause(job_id)
+            return self.repository.report(job_id)
+        finally:
+            self.server.disconnect()
+
     def pause(self, job_id: str) -> None:
         self.engine.pause(job_id)
 
@@ -139,16 +150,21 @@ class OnlineWorkflow:
         self._checkpoint(job_id, "online_precheck_complete", payload={"site_root": discovery.site_root})
         self.engine.transition(job_id, JobStatus.SCANNING)
         batch: list[OnlineItem] = []
+        scanned = 0
         scanner = RemoteImageScanner(_RetryingServer(self))
         # Scanner is lazy and stores batches rather than retaining the site inventory.
         for remote in scanner.scan(discovery.uploads):
             if not self._may_continue(job_id): break
             identifier = str(uuid5(NAMESPACE_URL, f"{job_id}:{remote.path}"))
             batch.append(OnlineItem(identifier, job_id, remote.path, remote.size or 0))
+            scanned += 1
+            if scanned == 1 or scanned % 25 == 0:
+                self._progress(progress, "Scanning website", scanned, 0, remote.path)
             if len(batch) >= 200:
                 self.repository.save_items(batch); batch.clear()
         self.repository.save_items(batch)
         total = self.repository.count(job_id)
+        self._progress(progress, "Scanning website", total, total, discovery.uploads)
         originals = sum(i.original_bytes for i in self.repository.iter_items(job_id))
         self.engine.update_statistics(job_id, files_total=total, files_completed=0,
                                       original_bytes=originals, optimized_bytes=0, progress=0)
