@@ -113,6 +113,10 @@ def test_windows_executable_workflow_publishes_click_to_run_artifact():
     assert "dist/ImageOptimizer.exe" in workflow
     assert "ImageOptimizer.exe.sha256" in workflow
     assert "--check-startup --project-data" in build_script
+    assert 'Get-Command "py.exe"' in build_script
+    assert 'Get-Command "python.exe"' in build_script
+    assert "Python 3.11 or newer was not found" in build_script
+    assert "Invoke-NativeCommand" in build_script
     assert "scripts\\build_windows.ps1" in launcher
 
 
