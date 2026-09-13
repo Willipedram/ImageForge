@@ -27,6 +27,7 @@ from app.config.settings import AppSettings, ConfigurationStore
 from app.core.engine import JobEngine
 from app.core.jobs import Job, JobStatus
 from app.ui.dashboard import DashboardPage
+from app.ui.database_page import DatabaseChangesPage
 from app.ui.images_page import ImagesPage
 from app.ui.offline_page import OfflinePage
 from app.ui.online_page import OnlinePipelinePage
@@ -235,10 +236,10 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(tagline)
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
-        for label in ("Dashboard", "Offline Optimization", "Online Pipeline", "Server Connection", "Images", "Jobs & History", "Logs", "Settings"):
+        for label in ("Dashboard", "Offline Optimization", "Online Pipeline", "Database Review", "Server Connection", "Images", "Jobs & History", "Logs", "Settings"):
             QListWidgetItem(label, self.navigation)
         side_layout.addWidget(self.navigation, 1)
-        version = QLabel("Phase 8  •  Online Pipeline")
+        version = QLabel("Phase 9  •  Database Safety")
         version.setObjectName("versionLabel")
         side_layout.addWidget(version)
 
@@ -251,6 +252,8 @@ class MainWindow(QMainWindow):
             self.pages.addWidget(PlaceholderPage("Offline Optimization", "Job engine is not connected."))
         self.online_page = OnlinePipelinePage()
         self.pages.addWidget(self.online_page)
+        self.database_page = DatabaseChangesPage()
+        self.pages.addWidget(self.database_page)
         self.pages.addWidget(ServerConnectionPage(Path(settings.project_data_path)))
         if engine:
             from app.database.inventory import InventoryRepository

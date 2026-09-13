@@ -153,4 +153,4 @@ def test_schema_migrates_five_to_online_tables(tmp_path):
         tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert {"online_runs", "online_items"} <= tables
-    assert version == DATABASE_SCHEMA_VERSION == 6
+    assert version == DATABASE_SCHEMA_VERSION == 7

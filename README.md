@@ -1,6 +1,6 @@
 # ImageForge
 
-ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–8 provide durable jobs, remote discovery, image intelligence, auditable decisions, local-folder optimization, and a checkpointed production deployment pipeline.
+ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–9 provide durable jobs, remote discovery, image intelligence, auditable decisions, local-folder optimization, and a checkpointed production deployment pipeline.
 
 ## Architecture
 
@@ -9,7 +9,7 @@ app/
 ├── main.py              # bootstrap and desktop entry point
 ├── config/              # typed, non-secret settings
 ├── core/                # state machines, engine, retries, versions, errors
-├── database/            # transactional SQLite state repository
+├── database/            # SQLite state, MySQL discovery, backups, safe transforms
 ├── image/               # image analysis, classification, inventory building
 ├── server/              # FTP/FTPS/SFTP, preflight, discovery, scanning
 ├── online/              # staged upload, reference update, verification pipeline
@@ -88,6 +88,16 @@ Production candidates are uploaded below `optimization-temp/<job-id>/` and check
 
 A `ReferenceUpdater` boundary requires prepare, transactional apply, and verify operations. The production WordPress adapter is injected with runtime credentials; credentials are never represented in the online manifest. SQLite persists original/candidate paths, sizes and checksums, selected format and reason, upload/verification/database states, retries, errors, and stage checkpoints. Restart reconciliation inspects local partial downloads, staging objects, and promoted sidecars before scheduling work again. The Online Pipeline page runs the coordinator on a `QThread` and displays stage, current file, byte/file progress, elapsed time, ETA, retries, errors, and per-item manifest state.
 
+## WordPress database safety
+
+Phase 9 provides a MySQL/MariaDB `WordPressReferenceUpdater` behind the online pipeline's existing transaction boundary. Connection passwords remain runtime-only and are excluded from representations; PyMySQL uses `utf8mb4`, explicit transactions, and a server-side streaming cursor. Table discovery derives the prefix from the actual `posts`, `postmeta`, and `options` set, then inventories every text/JSON column in every prefixed core, plugin, WooCommerce, Elementor, comment, option, term, and metadata table with a usable primary key. No `wp_` prefix is assumed.
+
+Before dry-run inventory, ImageForge streams a complete logical backup of every table in the selected database—not only WordPress-prefixed tables—to `ProjectData/jobs/<job-id>/database/wordpress-full-backup.jsonl.gz`. Binary, decimal, and temporal values are type-tagged; schema statements and rows are retained. A SHA-256 sidecar is generated, the gzip stream and every JSON record are read back, and mutation is refused unless verification succeeds. If a later controlled batch fails after earlier batches committed, the verified full backup is restored and persisted changes are marked `ROLLED_BACK`.
+
+Reference discovery recognizes HTTP/HTTPS URLs, root-relative and uploads-relative paths, URL-encoded and slash-escaped forms, HTML URL attributes and `srcset`, recursive JSON values, and nested PHP arrays. PHP serialized strings are parsed byte-for-byte and reserialized with corrected UTF-8 byte lengths; objects, references, custom serialization, malformed lengths, and invalid JSON are never guessed and are marked `REVIEW`. HTML replacement is limited to URL-bearing attributes so unrelated prose is untouched. Attachment metadata arrays retain dimensions, sizes, and relationships while only matching path strings change.
+
+The dry run is persisted in SQLite schema version 7 with table, primary key, record ID, column, old value, proposed value, change type, status, and review reason. Reference-graph edges connect each image to attachment metadata, content, products, widgets, and plugin rows. The **Database Review** page displays every proposal before mutation. Explicit approval is impossible while any record requires review. Approved writes use optimistic `WHERE primary_key AND old_value` guards in controlled batches, followed by structural validation, confirmation of new values, and a database-wide search for stale old references. Blind SQL `REPLACE` is never used.
+
 ## Installation and running
 
 Python 3.11 or newer is recommended.
@@ -134,4 +144,4 @@ Keep UI work on the Qt main thread and all expensive or blocking work in workers
 
 ## Roadmap
 
-Future phases will add production rollback orchestration and guarded remote-original cleanup only after reference and serving verification. Phase 8 deliberately retains every remote original and every verified local backup; raster-to-vector conversion remains out of scope.
+Future phases will build on the verified database backup and reference graph to add production rollback orchestration and guarded remote-original cleanup only after reference and serving verification. Phase 8 deliberately retains every remote original and every verified local backup; raster-to-vector conversion remains out of scope.
