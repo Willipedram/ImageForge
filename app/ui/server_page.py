@@ -190,12 +190,14 @@ class ServerConnectionPage(QWidget):
                 f"WooCommerce: {'Yes' if site.woocommerce else 'No'}",
                 f"Elementor: {'Yes' if site.elementor else 'No'}",
             ])
+        elif report.discovery:
+            lines.extend(["", *self._discovery_help()])
         self.results.setPlainText("\n".join(lines))
 
     def _connection_help(self) -> list[str]:
-        if self.port.value() == 2222:
+        if self.port.value() in {2222, 2223}:
             return [
-                "DirectAdmin port 2222 is for the web control panel, not FTP/SFTP.",
+                f"DirectAdmin port {self.port.value()} is for the web control panel, not FTP/SFTP.",
                 "Create or select an FTP account in DirectAdmin, then choose FTP/FTPS and port 21 here.",
             ]
         if self.protocol.currentText() == Protocol.SFTP.value:
@@ -206,6 +208,13 @@ class ServerConnectionPage(QWidget):
         return [
             "Check the FTP hostname, port, username, and password shown in DirectAdmin's FTP Management page.",
             "The DirectAdmin web-panel URL/password is not automatically an FTP login.",
+        ]
+
+    def _discovery_help(self) -> list[str]:
+        return [
+            "The FTP login works, but its accessible directory does not contain the WordPress root markers.",
+            "In DirectAdmin > FTP Management, set this account to Domain directory access and use /public_html here,",
+            "or set its custom path to the domain's public_html directory. A public_html subdirectory account cannot scan the whole site.",
         ]
 
     def _credential_id(self) -> str:

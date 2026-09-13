@@ -64,11 +64,13 @@ def test_server_page_loads_saved_windows_credentials(tmp_path, qapp):
 
 def test_server_page_explains_directadmin_is_not_sftp(tmp_path, qapp):
     page = ServerConnectionPage(tmp_path)
-    page.port.setValue(2222)
+    page.port.setValue(2223)
     assert "web control panel" in " ".join(page._connection_help())
     page.port.setValue(22)
     page.protocol.setCurrentText("SFTP")
     assert "SSH access" in " ".join(page._connection_help())
+    assert "Domain directory" in " ".join(page._discovery_help())
+    assert "subdirectory account" in " ".join(page._discovery_help())
 
 
 def test_theme_system_produces_distinct_professional_palettes():
