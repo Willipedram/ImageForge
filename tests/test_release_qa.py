@@ -53,6 +53,7 @@ class CredentialBackend:
 def test_windows_credentials_use_secure_backend_and_reject_unsafe_ids():
     backend = CredentialBackend(); provider = WindowsCredentialProvider(backend)
     provider.save("sftp:example.test", RuntimeCredentials("alice", "release-secret"))
+    assert backend.values["ImageForge/sftp:example.test"]["CredentialBlob"] == "release-secret"
     assert "release-secret" not in repr(provider.load("sftp:example.test"))
     assert provider.load("sftp:example.test").password == "release-secret"
     provider.delete("sftp:example.test"); assert provider.load("sftp:example.test") is None

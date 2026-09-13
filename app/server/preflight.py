@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.server.base import RemoteServer
 from app.server.discovery import SiteDiscoverer, SiteDiscovery
+from app.server.errors import PermissionDenied
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +54,10 @@ class PreflightService:
                     try:
                         self.server.stat(candidate)
                         alternative = discoverer.discover(candidate)
-                    except (FileNotFoundError, PermissionError):
+                    # Hosting accounts often expose only their assigned root
+                    # and reject probes of unrelated conventional paths.
+                    # A denied fallback is not a failure of the valid login.
+                    except (OSError, PermissionDenied):
                         continue
                     if alternative.wordpress:
                         discovery = alternative

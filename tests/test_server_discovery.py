@@ -215,6 +215,20 @@ def test_preflight_tries_hosting_control_panel_root_when_login_root_is_empty(tmp
     assert report.discovery.site_root == site
 
 
+def test_preflight_ignores_permission_denied_for_unrelated_fallback(tmp_path):
+    class RestrictedServer(FakeServer):
+        def stat(self, path):
+            if normalize_remote_path(path) == "/public_html":
+                from app.server.errors import PermissionDenied
+                raise PermissionDenied("list this remote directory")
+            return super().stat(path)
+
+    server = RestrictedServer({"/": []}); server.connect()
+    report = PreflightService(server, tmp_path, minimum_free_bytes=1).run("/", ("/public_html",))
+    assert any(check.name == "Website discovery" for check in report.checks)
+    assert not any(check.name == "Remote access" for check in report.checks)
+
+
 def test_credentials_are_ephemeral_and_redacted():
     credentials = RuntimeCredentials("alice", "super-secret")
     config = ConnectionConfig(Protocol.SFTP, "example.com", 22)
