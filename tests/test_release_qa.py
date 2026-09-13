@@ -104,6 +104,18 @@ def test_release_versions_and_packaging_exclude_project_data(monkeypatch, tmp_pa
     assert default_project_data_path() == tmp_path / "ProjectData"
 
 
+def test_windows_executable_workflow_publishes_click_to_run_artifact():
+    workflow = Path(".github/workflows/windows-executable.yml").read_text(encoding="utf-8")
+    launcher = Path("build_windows.bat").read_text(encoding="utf-8")
+    build_script = Path("scripts/build_windows.ps1").read_text(encoding="utf-8")
+    assert "scripts\\build_windows.ps1" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+    assert "dist/ImageOptimizer.exe" in workflow
+    assert "ImageOptimizer.exe.sha256" in workflow
+    assert "--check-startup --project-data" in build_script
+    assert "scripts\\build_windows.ps1" in launcher
+
+
 def test_job_database_v8_migrates_and_records_runtime_versions(tmp_path):
     database = tmp_path / "state.db"
     JobRepository(database).initialize()
