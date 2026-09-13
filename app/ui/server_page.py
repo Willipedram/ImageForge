@@ -223,6 +223,7 @@ class ServerConnectionPage(QWidget):
                 "EVIDENCE: /public_html is visible but empty for this FTP account.",
                 "ROOT CAUSE: WordPress files are outside the account root, or are not installed in this domain's document root.",
                 "Open DirectAdmin File Manager, locate wp-config.php, then grant this FTP account access to that exact parent directory.",
+                "SUPPORT REQUEST: Please set this FTP user's root to the directory containing wp-config.php; /public_html currently returns 0 entries.",
             ])
         return lines
 

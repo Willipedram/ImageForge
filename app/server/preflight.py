@@ -156,6 +156,13 @@ class PreflightService:
                 if "/public_html" in all_empty_paths
                 else "No inspected directory contains all required WordPress markers"
             )
+            diagnosis_code = (
+                "OK"
+                if discovery.wordpress
+                else "FTP_DOCUMENT_ROOT_EMPTY"
+                if "/public_html" in all_empty_paths
+                else "WORDPRESS_MARKERS_NOT_VISIBLE"
+            )
             log_keypoint(logger, "website_discovery_summary",
                          "passed" if discovery.wordpress else "stopped", context={
                 "run": run_id,
@@ -163,6 +170,7 @@ class PreflightService:
                 "skipped_paths": ", ".join(skipped_paths) or "none",
                 "denied_paths": ", ".join(denied_paths) or "none",
                 "empty_paths": ", ".join(all_empty_paths) or "none",
+                "diagnosis_code": diagnosis_code,
                 "conclusion": conclusion,
                 "recommended_action": "locate wp-config.php in DirectAdmin File Manager and update FTP root"
                     if not discovery.wordpress else "continue",
