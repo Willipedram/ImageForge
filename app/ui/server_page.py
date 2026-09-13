@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
@@ -11,7 +14,11 @@ from PySide6.QtWidgets import (
 )
 
 from app.server import ConnectionConfig, Protocol, RuntimeCredentials, create_server
+from app.server.credentials import CredentialProvider, RuntimeCredentialProvider, WindowsCredentialProvider
 from app.server.preflight import PreflightReport, PreflightService
+from app.utils.checkpoints import log_keypoint
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoveryWorker(QObject):
@@ -26,27 +33,61 @@ class DiscoveryWorker(QObject):
 
     @Slot()
     def run(self) -> None:
-        server = create_server(self.config, self.credentials)
+        server = None
         try:
-            self.finished.emit(PreflightService(server, self.project_data).run(self.config.remote_root))
+            server = create_server(self.config, self.credentials)
+            host = self.config.host.casefold()
+            for prefix in ("ftp.", "www."):
+                if host.startswith(prefix):
+                    host = host[len(prefix):]
+            common_roots = (
+                "/",
+                f"/domains/{host}/public_html",
+                "/public_html",
+                "/private_html",
+                "/www",
+                "/htdocs",
+            )
+            self.finished.emit(PreflightService(server, self.project_data).run(
+                self.config.remote_root, common_roots
+            ))
         except Exception as exc:
+            log_keypoint(logger, "connection_worker", "stopped", error=exc)
             self.failed.emit(str(exc))
         finally:
-            server.disconnect()
+            if server is not None:
+                server.disconnect()
             self.credentials = RuntimeCredentials("", "")
 
 
 class ServerConnectionPage(QWidget):
-    def __init__(self, project_data: Path) -> None:
+    def __init__(self, project_data: Path, credential_provider: CredentialProvider | None = None) -> None:
         super().__init__()
         self.project_data = project_data
         self._thread: QThread | None = None
+        self._pending_credentials: RuntimeCredentials | None = None
+        if credential_provider is not None:
+            self.credential_provider = credential_provider
+        elif sys.platform == "win32":
+            try:
+                self.credential_provider = WindowsCredentialProvider()
+            except (ImportError, OSError):
+                self.credential_provider = RuntimeCredentialProvider()
+        else:
+            self.credential_provider = RuntimeCredentialProvider()
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
         heading = QLabel("Server Connection")
         heading.setObjectName("pageHeading")
         root.addWidget(heading)
         root.addWidget(QLabel("Test secure access and discover the website without downloading image bodies."))
+        access_note = QLabel(
+            "DirectAdmin panel access is not a file-transfer connection. Use an FTP/FTPS account "
+            "created in DirectAdmin (usually port 21), or an SSH/SFTP account enabled by the host."
+        )
+        access_note.setWordWrap(True)
+        access_note.setObjectName("pageSubtitle")
+        root.addWidget(access_note)
         panel = QFrame()
         panel.setObjectName("settingsPanel")
         form = QFormLayout(panel)
@@ -59,8 +100,14 @@ class ServerConnectionPage(QWidget):
         self.username = QLineEdit()
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.Password)
-        self.password.setPlaceholderText("Used for this connection only")
+        self.password.setPlaceholderText("Password")
         self.remote_root = QLineEdit("/")
+        self.remote_root.setPlaceholderText("Example: /domains/example.com/public_html")
+        self.remember_password = QCheckBox("Save password securely in Windows Credential Manager")
+        self.remember_password.setEnabled(not isinstance(self.credential_provider, RuntimeCredentialProvider))
+        self.remember_password.toggled.connect(self._remember_toggled)
+        self.remember_password.setChecked(self.remember_password.isEnabled())
+        self.host.editingFinished.connect(self._load_saved_credentials)
         self.strict_security = QCheckBox("Verify TLS certificate / SSH host key")
         self.strict_security.setChecked(True)
         self.protocol.currentTextChanged.connect(self._protocol_changed)
@@ -68,6 +115,7 @@ class ServerConnectionPage(QWidget):
             ("Protocol", self.protocol), ("Host", self.host), ("Port", self.port),
             ("Username", self.username), ("Password", self.password),
             ("Remote root", self.remote_root), ("Security", self.strict_security),
+            ("Credentials", self.remember_password),
         ):
             form.addRow(label, widget)
         buttons = QHBoxLayout()
@@ -89,6 +137,8 @@ class ServerConnectionPage(QWidget):
     def _start(self) -> None:
         if self._thread and self._thread.isRunning():
             return
+        if self.remember_password.isChecked() and not self.password.text():
+            self._load_saved_credentials()
         if not self.host.text().strip() or not self.username.text().strip():
             self.results.setPlainText("Host and username are required.")
             return
@@ -98,6 +148,7 @@ class ServerConnectionPage(QWidget):
             verify_tls=self.strict_security.isChecked(), verify_host_key=self.strict_security.isChecked(),
         )
         credentials = RuntimeCredentials(self.username.text(), self.password.text())
+        self._pending_credentials = credentials
         self.password.clear()
         self.test_button.setEnabled(False)
         self.results.setPlainText("Connecting and discovering…")
@@ -118,6 +169,18 @@ class ServerConnectionPage(QWidget):
     @Slot(object)
     def _show_report(self, report: PreflightReport) -> None:
         lines = [f"{'✓' if check.passed else '✕'} {check.name}: {check.detail}" for check in report.checks]
+        if any(check.name == "Remote access" and not check.passed for check in report.checks):
+            lines.extend(["", *self._connection_help(),
+                          f"Failure keypoint was written to: {self.project_data / 'logs' / 'imageforge.log'}"])
+        connected = any(check.name == "Connection and authentication" and check.passed for check in report.checks)
+        if connected and self.remember_password.isChecked() and self._pending_credentials:
+            try:
+                self.credential_provider.save(self._credential_id(), self._pending_credentials)
+                lines.extend(["", "✓ Password saved securely in Windows Credential Manager"])
+            except Exception as exc:
+                lines.extend(["", f"✕ Password was not saved: {exc}"])
+        if report.discovery:
+            self.remote_root.setText(report.discovery.site_root or report.discovery.search_root)
         if report.discovery and report.discovery.wordpress:
             site = report.discovery
             lines.extend([
@@ -128,13 +191,77 @@ class ServerConnectionPage(QWidget):
                 f"WooCommerce: {'Yes' if site.woocommerce else 'No'}",
                 f"Elementor: {'Yes' if site.elementor else 'No'}",
             ])
+        elif report.discovery:
+            lines.extend(["", *self._discovery_help(report.discovery)])
         self.results.setPlainText("\n".join(lines))
+
+    def _connection_help(self) -> list[str]:
+        if self.port.value() in {2222, 2223}:
+            return [
+                f"DirectAdmin port {self.port.value()} is for the web control panel, not FTP/SFTP.",
+                "Create or select an FTP account in DirectAdmin, then choose FTP/FTPS and port 21 here.",
+            ]
+        if self.protocol.currentText() == Protocol.SFTP.value:
+            return [
+                "SFTP requires SSH access enabled by the hosting provider; DirectAdmin access alone is not enough.",
+                "If SSH is unavailable, create an FTP account in DirectAdmin and try FTP/FTPS on port 21.",
+            ]
+        return [
+            "Check the FTP hostname, port, username, and password shown in DirectAdmin's FTP Management page.",
+            "The DirectAdmin web-panel URL/password is not automatically an FTP login.",
+        ]
+
+    def _discovery_help(self, discovery=None) -> list[str]:
+        lines = [
+            "The FTP login works, but its accessible directory does not contain the WordPress root markers.",
+            "In DirectAdmin > FTP Management, set this account to Domain directory access and use /public_html here,",
+            "or set its custom path to the domain's public_html directory. A public_html subdirectory account cannot scan the whole site.",
+            "Use the closest path and missing markers shown above to confirm exactly what this FTP account can see.",
+        ]
+        if discovery and "/public_html" in discovery.empty_directories:
+            lines.extend([
+                "Important: /public_html is visible but empty for this FTP account.",
+                "Open DirectAdmin File Manager, locate wp-config.php, then grant this FTP account access to that exact parent directory.",
+            ])
+        return lines
+
+    def _credential_id(self) -> str:
+        endpoint = f"{self.protocol.currentText()}|{self.host.text().strip().casefold()}|{self.port.value()}"
+        return "server-" + hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
+
+    @Slot(bool)
+    def _remember_toggled(self, checked: bool) -> None:
+        if not self.host.text().strip():
+            return
+        try:
+            if checked:
+                self._load_saved_credentials()
+            else:
+                self.credential_provider.delete(self._credential_id())
+        except Exception as exc:
+            self.results.setPlainText(f"Credential Manager error: {exc}")
+
+    @Slot()
+    def _load_saved_credentials(self) -> None:
+        if not self.remember_password.isChecked() or not self.host.text().strip():
+            return
+        try:
+            saved = self.credential_provider.load(self._credential_id())
+            if saved:
+                self.username.setText(saved.username)
+                self.password.setText(saved.password)
+        except Exception as exc:
+            self.results.setPlainText(f"Credential Manager error: {exc}")
 
     @Slot(str)
     def _show_error(self, message: str) -> None:
-        self.results.setPlainText(f"Connection failed: {message}")
+        self.results.setPlainText("\n".join([
+            f"Connection failed: {message}", "", *self._connection_help(),
+            f"Failure keypoint was written to: {self.project_data / 'logs' / 'imageforge.log'}",
+        ]))
 
     @Slot()
     def _finished(self) -> None:
+        self._pending_credentials = None
         self.test_button.setEnabled(True)
         self._thread = None

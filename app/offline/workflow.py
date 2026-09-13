@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 from collections.abc import Callable, Iterator
@@ -16,6 +17,9 @@ from app.image.intelligence import detect_format
 from app.image.optimization_models import OptimizationDecision
 from app.image.optimizer import OfflineOptimizer
 from app.offline.models import LocalItem, LocalItemStatus, OfflineReport
+from app.utils.checkpoints import log_keypoint
+
+logger = logging.getLogger(__name__)
 
 LOCAL_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".svg"})
 
@@ -354,6 +358,8 @@ class OfflineWorkflow:
                 connection, job_id, operation, state,
                 payload=payload, is_safe=safe,
             )
+        log_keypoint(logger, operation, "passed" if safe else "stopped", job_id=job_id,
+                     item_id=str(payload.get("item")) if payload.get("item") else None)
 
     def _run(self, job_id: str) -> dict:
         run = self.repository.run(job_id)
