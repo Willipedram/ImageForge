@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import logging
 import sqlite3
 import sys
 import tracemalloc
-from uuid import uuid4
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
 from app.config.settings import ConfigurationStore, default_project_data_path
 from app.core.engine import JobEngine
 from app.core.jobs import JobStatus
-from app.core.runtime_versions import runtime_versions
+from app.core.runtime_versions import _installed_version, runtime_versions
 from app.core.version import APP_VERSION, DATA_SCHEMA_VERSION
 from app.database.jobs import DATABASE_SCHEMA_VERSION, JobRepository
 from app.database.offline import OfflineRepository
@@ -105,9 +106,23 @@ def test_release_versions_and_packaging_exclude_project_data(monkeypatch, tmp_pa
     versions = runtime_versions(); assert versions["application"] == APP_VERSION and "webp_encoder" in versions
     spec = Path("ImageForge.spec").read_text(encoding="utf-8")
     assert 'name="ImageOptimizer"' in spec and "ProjectData" not in spec
+    assert "copy_metadata" in spec and '"Pillow"' in spec
     monkeypatch.setattr(sys, "frozen", True, raising=False); monkeypatch.setattr(sys, "executable", str(tmp_path / "ImageOptimizer.exe"))
     monkeypatch.delenv("IMAGEFORGE_PROJECT_DATA", raising=False)
     assert default_project_data_path() == tmp_path / "ProjectData"
+
+
+def test_runtime_version_falls_back_when_frozen_metadata_is_missing(monkeypatch):
+    def metadata_missing(_distribution):
+        raise importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(importlib.metadata, "version", metadata_missing)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda _module: SimpleNamespace(__version__="12.3.0"),
+    )
+    assert _installed_version("Pillow", "PIL") == "12.3.0"
 
 
 def test_windows_executable_workflow_publishes_click_to_run_artifact():
