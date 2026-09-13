@@ -145,6 +145,21 @@ def test_discovery_supports_configurable_content_and_upload_names():
     assert result.uploads == "/site/assets/pictures"
 
 
+def test_failed_discovery_reports_closest_path_and_missing_markers():
+    tree = {
+        "/": [directory("/public_html", "public_html")],
+        "/public_html": [directory("/public_html/wp-content", "wp-content"),
+                          file("/public_html/index.php", "index.php")],
+        "/public_html/wp-content": [],
+    }
+    server = FakeServer(tree); server.connect()
+    result = SiteDiscoverer(server).discover("/")
+    assert not result.wordpress
+    assert result.closest_path == "/public_html"
+    assert result.missing_markers == ("wp-admin", "wp-includes")
+    assert result.directories_checked == 3
+
+
 def test_metadata_scan_handles_unicode_spaces_and_case_without_downloads(wordpress_server):
     images = list(RemoteImageScanner(wordpress_server).scan("/clients/Acme Site/wp-content/uploads"))
     assert [image.path for image in images] == [
@@ -197,6 +212,62 @@ def test_preflight_is_non_destructive_and_finds_site(wordpress_server, tmp_path)
     assert report.passed
     assert report.discovery.wordpress
     assert wordpress_server.download_count == 0
+
+
+def test_preflight_tries_hosting_control_panel_root_when_login_root_is_empty(tmp_path):
+    site = "/domains/safirezaman.com/public_html"
+    tree = {
+        "/": [],
+        site: [file(f"{site}/wp-config.php", "wp-config.php"),
+               directory(f"{site}/wp-admin", "wp-admin"),
+               directory(f"{site}/wp-content", "wp-content"),
+               directory(f"{site}/wp-includes", "wp-includes")],
+        f"{site}/wp-admin": [], f"{site}/wp-content": [], f"{site}/wp-includes": [],
+    }
+    server = FakeServer(tree); server.connect()
+    report = PreflightService(server, tmp_path, minimum_free_bytes=1).run("/", (site,))
+    assert report.discovery.wordpress
+    assert report.discovery.site_root == site
+
+
+def test_preflight_ignores_permission_denied_for_unrelated_fallback(tmp_path):
+    class RestrictedServer(FakeServer):
+        def stat(self, path):
+            if normalize_remote_path(path) == "/public_html":
+                from app.server.errors import PermissionDenied
+                raise PermissionDenied("list this remote directory")
+            return super().stat(path)
+
+    server = RestrictedServer({"/": []}); server.connect()
+    report = PreflightService(server, tmp_path, minimum_free_bytes=1).run("/", ("/public_html",))
+    assert any(check.name == "Website discovery" for check in report.checks)
+    assert not any(check.name == "Remote access" for check in report.checks)
+
+
+def test_preflight_logs_the_exact_failed_keypoint(tmp_path, caplog):
+    server = FakeServer({"/": []})
+    server.connect = lambda: (_ for _ in ()).throw(ConnectionError("offline"))
+    with caplog.at_level("INFO"):
+        report = PreflightService(server, tmp_path, minimum_free_bytes=1).run("/")
+    assert "Stopped at connection" in report.checks[0].detail
+    assert "[KEYPOINT] status=STOPPED checkpoint=connection" in caplog.text
+
+
+def test_preflight_recovers_when_configured_root_is_outside_ftp_chroot(tmp_path):
+    class ChrootedServer(FakeServer):
+        def list(self, path):
+            if normalize_remote_path(path).startswith("/domains/"):
+                from app.server.errors import PermissionDenied
+                raise PermissionDenied("list this remote directory")
+            return super().list(path)
+
+    server = ChrootedServer({"/": []}); server.connect()
+    configured = "/domains/safirezaman.com/public_html"
+    report = PreflightService(server, tmp_path, minimum_free_bytes=1).run(configured, ("/",))
+    listing = next(check for check in report.checks if check.name == "Directory listing")
+    assert listing.passed
+    assert "at /" in listing.detail and "was not accessible" in listing.detail
+    assert not any(check.name == "Remote access" for check in report.checks)
 
 
 def test_credentials_are_ephemeral_and_redacted():
