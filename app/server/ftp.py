@@ -91,7 +91,13 @@ class FTPServer(RemoteServer):
         if normalized == "/":
             return RemoteEntry("/", "/", True)
         parent, name = normalized.rsplit("/", 1)
-        return next(entry for entry in self.list(parent or "/") if entry.name == name)
+        entry = next((entry for entry in self.list(parent or "/") if entry.name == name), None)
+        if entry is None:
+            # StopIteration has an empty message and used to escape preflight,
+            # turning a harmless missing fallback path into an opaque discovery
+            # failure. RemoteServer.stat follows normal filesystem semantics.
+            raise FileNotFoundError(normalized)
+        return entry
 
     def download(self, remote_path: str, destination: Path | BinaryIO) -> None:
         stream: BinaryIO
@@ -123,7 +129,7 @@ class FTPServer(RemoteServer):
         try:
             self.stat(path)
             return True
-        except (StopIteration, PermissionDenied):
+        except (FileNotFoundError, PermissionDenied):
             return False
 
     def mkdir(self, path: str) -> None:
