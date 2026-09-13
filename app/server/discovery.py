@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mimetypes
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -25,6 +26,19 @@ class DiscoveryOptions:
     uploads_names: tuple[str, ...] = ("uploads", "media")
     themes_names: tuple[str, ...] = ("themes",)
     plugins_names: tuple[str, ...] = ("plugins",)
+    max_trace_directories: int = 250
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryTrace:
+    path: str
+    depth: int
+    status: str
+    entry_count: int = 0
+    child_directories: tuple[str, ...] = ()
+    found_markers: tuple[str, ...] = ()
+    missing_markers: tuple[str, ...] = ()
+    error_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,9 +71,12 @@ class RemoteImage:
 
 
 class SiteDiscoverer:
-    def __init__(self, server: RemoteServer, options: DiscoveryOptions | None = None) -> None:
+    def __init__(self, server: RemoteServer, options: DiscoveryOptions | None = None,
+                 trace: Callable[[DiscoveryTrace], None] | None = None) -> None:
         self.server = server
         self.options = options or DiscoveryOptions()
+        self.trace = trace
+        self._trace_count = 0
 
     def discover(self, search_root: str = "/") -> SiteDiscovery:
         root = normalize_remote_path(search_root)
@@ -75,10 +92,10 @@ class SiteDiscoverer:
             visited.add(key)
             try:
                 entries = self.server.list(directory)
-            except (PermissionError, PermissionDenied):
+            except (PermissionError, PermissionDenied) as exc:
+                self._emit_trace(DiscoveryTrace(directory, depth, "denied", error_type=type(exc).__name__))
                 continue
             names = {entry.name.casefold(): entry for entry in entries}
-            structural = {"wp-admin", "wp-includes"}
             content_entry = next(
                 (names[name.casefold()] for name in self.options.content_names if name.casefold() in names), None
             )
@@ -92,6 +109,23 @@ class SiteDiscoverer:
                 ) if not present
             )
             score = 4 - len(missing)
+            children = tuple(sorted(
+                entry.name for entry in entries
+                if entry.is_directory and (self.options.follow_symlinks or not entry.is_symlink)
+            ))
+            found = tuple(label for present, label in (
+                ("wp-admin" in names, "wp-admin"),
+                ("wp-includes" in names, "wp-includes"),
+                (content_entry is not None, content_entry.name if content_entry else "wp-content"),
+                (has_root_marker, next(
+                    (marker for marker in self.options.root_markers if marker.casefold() in names),
+                    "root PHP marker",
+                )),
+            ) if present)
+            self._emit_trace(DiscoveryTrace(
+                directory, depth, "wordpress_found" if not missing else "inspected",
+                len(entries), children, found, missing,
+            ))
             if score > best_score:
                 best_path, best_score, best_missing = directory, score, missing
             wordpress = not missing
@@ -118,6 +152,16 @@ class SiteDiscoverer:
             root, None, False, missing_markers=best_missing,
             closest_path=best_path, directories_checked=len(visited),
         )
+
+    def _emit_trace(self, trace: DiscoveryTrace) -> None:
+        if self.trace is None or self._trace_count >= self.options.max_trace_directories:
+            return
+        self._trace_count += 1
+        try:
+            self.trace(trace)
+        except Exception:
+            # Diagnostics must never interrupt read-only discovery.
+            return
 
     def _first_existing(self, parent: str, names: tuple[str, ...]) -> str | None:
         for name in names:

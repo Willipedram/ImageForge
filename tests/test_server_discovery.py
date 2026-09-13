@@ -162,6 +162,19 @@ def test_failed_discovery_reports_closest_path_and_missing_markers():
     assert result.directories_checked == 3
 
 
+def test_discovery_trace_explains_each_directory_without_regular_filenames():
+    traces = []
+    tree = {"/": [directory("/public_html", "public_html"), file("/secret.txt", "secret.txt")],
+            "/public_html": [directory("/public_html/wp-content", "wp-content")],
+            "/public_html/wp-content": []}
+    server = FakeServer(tree); server.connect()
+    SiteDiscoverer(server, trace=traces.append).discover("/")
+    assert [trace.path for trace in traces] == ["/", "/public_html", "/public_html/wp-content"]
+    assert traces[0].child_directories == ("public_html",)
+    assert "secret.txt" not in repr(traces)
+    assert traces[1].found_markers == ("wp-content",)
+
+
 def test_metadata_scan_handles_unicode_spaces_and_case_without_downloads(wordpress_server):
     images = list(RemoteImageScanner(wordpress_server).scan("/clients/Acme Site/wp-content/uploads"))
     assert [image.path for image in images] == [

@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.server.base import RemoteServer
-from app.server.discovery import SiteDiscoverer, SiteDiscovery
+from app.server.discovery import DiscoveryTrace, SiteDiscoverer, SiteDiscovery
 from app.server.errors import PermissionDenied
 from app.utils.checkpoints import log_keypoint
 
@@ -84,7 +84,23 @@ class PreflightService:
             log_keypoint(logger, checkpoint, "passed", context={"run": run_id, "path": accessible_root})
             checkpoint = "website_discovery"
             log_keypoint(logger, checkpoint, "started", context={"run": run_id, "path": accessible_root})
-            discoverer = SiteDiscoverer(self.server)
+            def trace_directory(trace: DiscoveryTrace) -> None:
+                children = trace.child_directories[:30]
+                log_keypoint(
+                    logger, "website_discovery_directory",
+                    "warning" if trace.status == "denied" else "inspected",
+                    context={
+                        "run": run_id, "path": trace.path, "depth": trace.depth,
+                        "result": trace.status, "entries": trace.entry_count,
+                        "child_directories": ", ".join(children),
+                        "children_truncated": len(trace.child_directories) > len(children),
+                        "found_markers": ", ".join(trace.found_markers),
+                        "missing_markers": ", ".join(trace.missing_markers),
+                        "error_type": trace.error_type,
+                    },
+                )
+
+            discoverer = SiteDiscoverer(self.server, trace=trace_directory)
             discovery = discoverer.discover(accessible_root)
             if not discovery.wordpress:
                 for candidate in dict.fromkeys((remote_root, *discovery_roots)):
