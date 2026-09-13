@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,9 @@ from pathlib import Path
 from app.server.base import RemoteServer
 from app.server.discovery import SiteDiscoverer, SiteDiscovery
 from app.server.errors import PermissionDenied
+from app.utils.checkpoints import log_keypoint
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,14 +41,21 @@ class PreflightService:
     def run(self, remote_root: str, discovery_roots: tuple[str, ...] = ()) -> PreflightReport:
         checks: list[CheckResult] = []
         discovery = None
+        checkpoint = "connection"
         try:
             if not self.server.connected:
                 self.server.connect()
             checks.append(CheckResult("Connection and authentication", True, "Connected"))
+            log_keypoint(logger, checkpoint, "passed")
+            checkpoint = "directory_listing"
             entries = self.server.list(remote_root)
             checks.append(CheckResult("Directory listing", True, f"Read {len(entries)} entries"))
+            log_keypoint(logger, checkpoint, "passed")
+            checkpoint = "remote_read_access"
             self.server.stat(remote_root)
             checks.append(CheckResult("Remote read access", True, "Root metadata is readable"))
+            log_keypoint(logger, checkpoint, "passed")
+            checkpoint = "website_discovery"
             discoverer = SiteDiscoverer(self.server)
             discovery = discoverer.discover(remote_root)
             if not discovery.wordpress:
@@ -63,8 +74,10 @@ class PreflightService:
                         discovery = alternative
                         break
             checks.append(CheckResult("Website discovery", discovery.wordpress, discovery.site_root or "WordPress not detected"))
+            log_keypoint(logger, checkpoint, "passed" if discovery.wordpress else "stopped")
         except Exception as exc:
-            checks.append(CheckResult("Remote access", False, str(exc)))
+            log_keypoint(logger, checkpoint, "stopped", error=exc)
+            checks.append(CheckResult("Remote access", False, f"Stopped at {checkpoint}: {exc}"))
         self.project_data.mkdir(parents=True, exist_ok=True)
         free = shutil.disk_usage(self.project_data).free
         checks.append(CheckResult("Local disk space", free >= self.minimum_free_bytes, f"{free} bytes available"))

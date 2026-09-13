@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import sys
 from pathlib import Path
 
@@ -15,6 +16,9 @@ from PySide6.QtWidgets import (
 from app.server import ConnectionConfig, Protocol, RuntimeCredentials, create_server
 from app.server.credentials import CredentialProvider, RuntimeCredentialProvider, WindowsCredentialProvider
 from app.server.preflight import PreflightReport, PreflightService
+from app.utils.checkpoints import log_keypoint
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoveryWorker(QObject):
@@ -29,8 +33,9 @@ class DiscoveryWorker(QObject):
 
     @Slot()
     def run(self) -> None:
-        server = create_server(self.config, self.credentials)
+        server = None
         try:
+            server = create_server(self.config, self.credentials)
             host = self.config.host.casefold()
             for prefix in ("ftp.", "www."):
                 if host.startswith(prefix):
@@ -45,9 +50,11 @@ class DiscoveryWorker(QObject):
                 self.config.remote_root, common_roots
             ))
         except Exception as exc:
+            log_keypoint(logger, "connection_worker", "stopped", error=exc)
             self.failed.emit(str(exc))
         finally:
-            server.disconnect()
+            if server is not None:
+                server.disconnect()
             self.credentials = RuntimeCredentials("", "")
 
 
@@ -161,7 +168,8 @@ class ServerConnectionPage(QWidget):
     def _show_report(self, report: PreflightReport) -> None:
         lines = [f"{'✓' if check.passed else '✕'} {check.name}: {check.detail}" for check in report.checks]
         if any(check.name == "Remote access" and not check.passed for check in report.checks):
-            lines.extend(["", *self._connection_help()])
+            lines.extend(["", *self._connection_help(),
+                          f"Failure keypoint was written to: {self.project_data / 'logs' / 'imageforge.log'}"])
         connected = any(check.name == "Connection and authentication" and check.passed for check in report.checks)
         if connected and self.remember_password.isChecked() and self._pending_credentials:
             try:
@@ -228,7 +236,10 @@ class ServerConnectionPage(QWidget):
 
     @Slot(str)
     def _show_error(self, message: str) -> None:
-        self.results.setPlainText("\n".join([f"Connection failed: {message}", "", *self._connection_help()]))
+        self.results.setPlainText("\n".join([
+            f"Connection failed: {message}", "", *self._connection_help(),
+            f"Failure keypoint was written to: {self.project_data / 'logs' / 'imageforge.log'}",
+        ]))
 
     @Slot()
     def _finished(self) -> None:

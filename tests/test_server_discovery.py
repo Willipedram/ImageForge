@@ -229,6 +229,15 @@ def test_preflight_ignores_permission_denied_for_unrelated_fallback(tmp_path):
     assert not any(check.name == "Remote access" for check in report.checks)
 
 
+def test_preflight_logs_the_exact_failed_keypoint(tmp_path, caplog):
+    server = FakeServer({"/": []})
+    server.connect = lambda: (_ for _ in ()).throw(ConnectionError("offline"))
+    with caplog.at_level("INFO"):
+        report = PreflightService(server, tmp_path, minimum_free_bytes=1).run("/")
+    assert "Stopped at connection" in report.checks[0].detail
+    assert "[KEYPOINT] status=STOPPED checkpoint=connection" in caplog.text
+
+
 def test_credentials_are_ephemeral_and_redacted():
     credentials = RuntimeCredentials("alice", "super-secret")
     config = ConnectionConfig(Protocol.SFTP, "example.com", 22)

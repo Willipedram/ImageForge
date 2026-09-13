@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import posixpath
 import shutil
@@ -23,6 +24,9 @@ from app.server.base import RemoteServer
 from app.server.discovery import RemoteImageScanner, SiteDiscoverer
 from app.server.paths import normalize_remote_path, safe_join
 from app.server.preflight import PreflightService
+from app.utils.checkpoints import log_keypoint
+
+logger = logging.getLogger(__name__)
 
 
 class _RetryingServer(RemoteServer):
@@ -358,6 +362,8 @@ class OnlineWorkflow:
             self.engine.repository.checkpoint(connection, job_id, operation,
                 item.status.value if item else self.engine.repository.get(job_id).status.value,
                 item.id if item else None, payload=payload, is_safe=safe)
+        log_keypoint(logger, operation, "passed" if safe else "stopped", job_id=job_id,
+                     item_id=item.id if item else None)
 
     def _run(self, job_id: str) -> dict:
         run = self.repository.run(job_id)
