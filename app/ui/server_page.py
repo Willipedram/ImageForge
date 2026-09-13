@@ -72,6 +72,13 @@ class ServerConnectionPage(QWidget):
         heading.setObjectName("pageHeading")
         root.addWidget(heading)
         root.addWidget(QLabel("Test secure access and discover the website without downloading image bodies."))
+        access_note = QLabel(
+            "DirectAdmin panel access is not a file-transfer connection. Use an FTP/FTPS account "
+            "created in DirectAdmin (usually port 21), or an SSH/SFTP account enabled by the host."
+        )
+        access_note.setWordWrap(True)
+        access_note.setObjectName("pageSubtitle")
+        root.addWidget(access_note)
         panel = QFrame()
         panel.setObjectName("settingsPanel")
         form = QFormLayout(panel)
@@ -153,6 +160,8 @@ class ServerConnectionPage(QWidget):
     @Slot(object)
     def _show_report(self, report: PreflightReport) -> None:
         lines = [f"{'✓' if check.passed else '✕'} {check.name}: {check.detail}" for check in report.checks]
+        if any(check.name == "Remote access" and not check.passed for check in report.checks):
+            lines.extend(["", *self._connection_help()])
         connected = any(check.name == "Connection and authentication" and check.passed for check in report.checks)
         if connected and self.remember_password.isChecked() and self._pending_credentials:
             try:
@@ -172,6 +181,22 @@ class ServerConnectionPage(QWidget):
                 f"Elementor: {'Yes' if site.elementor else 'No'}",
             ])
         self.results.setPlainText("\n".join(lines))
+
+    def _connection_help(self) -> list[str]:
+        if self.port.value() == 2222:
+            return [
+                "DirectAdmin port 2222 is for the web control panel, not FTP/SFTP.",
+                "Create or select an FTP account in DirectAdmin, then choose FTP/FTPS and port 21 here.",
+            ]
+        if self.protocol.currentText() == Protocol.SFTP.value:
+            return [
+                "SFTP requires SSH access enabled by the hosting provider; DirectAdmin access alone is not enough.",
+                "If SSH is unavailable, create an FTP account in DirectAdmin and try FTP/FTPS on port 21.",
+            ]
+        return [
+            "Check the FTP hostname, port, username, and password shown in DirectAdmin's FTP Management page.",
+            "The DirectAdmin web-panel URL/password is not automatically an FTP login.",
+        ]
 
     def _credential_id(self) -> str:
         endpoint = f"{self.protocol.currentText()}|{self.host.text().strip().casefold()}|{self.port.value()}"
@@ -203,7 +228,7 @@ class ServerConnectionPage(QWidget):
 
     @Slot(str)
     def _show_error(self, message: str) -> None:
-        self.results.setPlainText(f"Connection failed: {message}")
+        self.results.setPlainText("\n".join([f"Connection failed: {message}", "", *self._connection_help()]))
 
     @Slot()
     def _finished(self) -> None:

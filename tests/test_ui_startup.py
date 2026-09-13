@@ -62,6 +62,15 @@ def test_server_page_loads_saved_windows_credentials(tmp_path, qapp):
     assert page.password.text() == "saved-password"
 
 
+def test_server_page_explains_directadmin_is_not_sftp(tmp_path, qapp):
+    page = ServerConnectionPage(tmp_path)
+    page.port.setValue(2222)
+    assert "web control panel" in " ".join(page._connection_help())
+    page.port.setValue(22)
+    page.protocol.setCurrentText("SFTP")
+    assert "SSH access" in " ".join(page._connection_help())
+
+
 def test_theme_system_produces_distinct_professional_palettes():
     assert stylesheet("light") != stylesheet("dark")
     assert "Segoe UI" in stylesheet("system") and "QTableWidget" in stylesheet("dark")
