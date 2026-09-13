@@ -9,7 +9,9 @@ pytest.importorskip("PySide6")
 
 from app.ui.dashboard import DashboardPage, DashboardSnapshot
 from app.ui.main_window import MainWindow
+from app.ui.server_page import ServerConnectionPage
 from app.ui.theme import stylesheet
+from app.server.base import RuntimeCredentials
 
 
 def test_main_window_constructs(tmp_path, qapp):
@@ -41,6 +43,34 @@ def test_dashboard_accepts_mocked_live_job_snapshot(qapp):
     assert page.cards["files_remaining"].value_label.text() == "480"
     assert page.cards["reduction"].value_label.text() == "39.0%"
     assert page.stage_labels["Download"].text().endswith("00:07:31")
+
+
+def test_server_page_loads_saved_windows_credentials(tmp_path, qapp):
+    class CredentialProvider:
+        def load(self, credential_id):
+            return RuntimeCredentials("saved-user", "saved-password")
+        def save(self, credential_id, credentials):
+            self.saved = (credential_id, credentials)
+        def delete(self, credential_id):
+            self.deleted = credential_id
+
+    page = ServerConnectionPage(tmp_path, CredentialProvider())
+    assert page.remember_password.isChecked()
+    page.host.setText("safirezaman.com")
+    page._load_saved_credentials()
+    assert page.username.text() == "saved-user"
+    assert page.password.text() == "saved-password"
+
+
+def test_server_page_explains_directadmin_is_not_sftp(tmp_path, qapp):
+    page = ServerConnectionPage(tmp_path)
+    page.port.setValue(2223)
+    assert "web control panel" in " ".join(page._connection_help())
+    page.port.setValue(22)
+    page.protocol.setCurrentText("SFTP")
+    assert "SSH access" in " ".join(page._connection_help())
+    assert "Domain directory" in " ".join(page._discovery_help())
+    assert "subdirectory account" in " ".join(page._discovery_help())
 
 
 def test_theme_system_produces_distinct_professional_palettes():
