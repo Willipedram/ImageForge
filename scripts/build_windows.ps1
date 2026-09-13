@@ -72,6 +72,9 @@ if ($RunTests) {
 } else {
     Write-Host "Skipping the optional test suite. Use scripts\build_windows.ps1 -RunTests to include it."
 }
+if (-not (Test-Path ".git")) {
+    Write-Host "Source ZIP detected (no .git directory); Git is not required."
+}
 Invoke-NativeCommand $BuildPython scripts\verify_release.py
 Invoke-NativeCommand $BuildPython -m PyInstaller --noconfirm --clean ImageForge.spec
 

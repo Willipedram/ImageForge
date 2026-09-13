@@ -134,6 +134,18 @@ def test_release_verification_works_without_git(monkeypatch, capsys):
     assert "tracked-file audit was skipped" in capsys.readouterr().out
 
 
+def test_release_verification_does_not_launch_git_for_source_zip(monkeypatch, tmp_path):
+    from scripts import verify_release
+
+    monkeypatch.setattr(verify_release, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        verify_release.subprocess,
+        "check_output",
+        lambda *args, **kwargs: pytest.fail("Git must not run for a source ZIP"),
+    )
+    assert verify_release._tracked_files() is None
+
+
 def test_job_database_v8_migrates_and_records_runtime_versions(tmp_path):
     database = tmp_path / "state.db"
     JobRepository(database).initialize()
