@@ -238,6 +238,23 @@ def test_preflight_logs_the_exact_failed_keypoint(tmp_path, caplog):
     assert "[KEYPOINT] status=STOPPED checkpoint=connection" in caplog.text
 
 
+def test_preflight_recovers_when_configured_root_is_outside_ftp_chroot(tmp_path):
+    class ChrootedServer(FakeServer):
+        def list(self, path):
+            if normalize_remote_path(path).startswith("/domains/"):
+                from app.server.errors import PermissionDenied
+                raise PermissionDenied("list this remote directory")
+            return super().list(path)
+
+    server = ChrootedServer({"/": []}); server.connect()
+    configured = "/domains/safirezaman.com/public_html"
+    report = PreflightService(server, tmp_path, minimum_free_bytes=1).run(configured, ("/",))
+    listing = next(check for check in report.checks if check.name == "Directory listing")
+    assert listing.passed
+    assert "at /" in listing.detail and "was not accessible" in listing.detail
+    assert not any(check.name == "Remote access" for check in report.checks)
+
+
 def test_credentials_are_ephemeral_and_redacted():
     credentials = RuntimeCredentials("alice", "super-secret")
     config = ConnectionConfig(Protocol.SFTP, "example.com", 22)

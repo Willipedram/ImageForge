@@ -41,6 +41,7 @@ class DiscoveryWorker(QObject):
                 if host.startswith(prefix):
                     host = host[len(prefix):]
             common_roots = (
+                "/",
                 f"/domains/{host}/public_html",
                 "/public_html",
                 "/www",
@@ -177,9 +178,10 @@ class ServerConnectionPage(QWidget):
                 lines.extend(["", "✓ Password saved securely in Windows Credential Manager"])
             except Exception as exc:
                 lines.extend(["", f"✕ Password was not saved: {exc}"])
+        if report.discovery:
+            self.remote_root.setText(report.discovery.site_root or report.discovery.search_root)
         if report.discovery and report.discovery.wordpress:
             site = report.discovery
-            self.remote_root.setText(site.site_root or self.remote_root.text())
             lines.extend([
                 "", "WordPress discovered",
                 f"Site root: {site.site_root}", f"Content: {site.wp_content}",

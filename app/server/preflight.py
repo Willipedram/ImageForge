@@ -48,19 +48,37 @@ class PreflightService:
             checks.append(CheckResult("Connection and authentication", True, "Connected"))
             log_keypoint(logger, checkpoint, "passed")
             checkpoint = "directory_listing"
-            entries = self.server.list(remote_root)
-            checks.append(CheckResult("Directory listing", True, f"Read {len(entries)} entries"))
+            accessible_root = remote_root
+            entries = None
+            last_access_error: BaseException | None = None
+            for candidate in dict.fromkeys((remote_root, *discovery_roots)):
+                try:
+                    candidate_entries = self.server.list(candidate)
+                except (OSError, PermissionDenied) as exc:
+                    last_access_error = exc
+                    log_keypoint(logger, "directory_candidate", "warning", error=exc)
+                    continue
+                accessible_root, entries = candidate, candidate_entries
+                break
+            if entries is None:
+                if last_access_error:
+                    raise last_access_error
+                raise FileNotFoundError(remote_root)
+            detail = f"Read {len(entries)} entries at {accessible_root}"
+            if accessible_root != remote_root:
+                detail += f" (configured root {remote_root} was not accessible)"
+            checks.append(CheckResult("Directory listing", True, detail))
             log_keypoint(logger, checkpoint, "passed")
             checkpoint = "remote_read_access"
-            self.server.stat(remote_root)
-            checks.append(CheckResult("Remote read access", True, "Root metadata is readable"))
+            self.server.stat(accessible_root)
+            checks.append(CheckResult("Remote read access", True, f"Root metadata is readable at {accessible_root}"))
             log_keypoint(logger, checkpoint, "passed")
             checkpoint = "website_discovery"
             discoverer = SiteDiscoverer(self.server)
-            discovery = discoverer.discover(remote_root)
+            discovery = discoverer.discover(accessible_root)
             if not discovery.wordpress:
-                for candidate in discovery_roots:
-                    if candidate == remote_root:
+                for candidate in dict.fromkeys((remote_root, *discovery_roots)):
+                    if candidate == accessible_root:
                         continue
                     try:
                         self.server.stat(candidate)
