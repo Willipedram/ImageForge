@@ -31,7 +31,7 @@ from app.offline.models import LocalItemStatus
 from app.offline.workflow import OfflineWorkflow
 from app.online.models import OnlineItem
 from app.storage.project_data import ProjectDataManager
-from app.utils.logging import configure_logging
+from app.utils.logging import configure_logging, read_live_logs
 
 
 class CredentialError(Exception):
@@ -64,7 +64,12 @@ def test_logs_configuration_and_sqlite_never_persist_keyed_secrets(tmp_path):
     log = configure_logging(tmp_path)
     logging.getLogger("security").error("password=release-secret token=abc123")
     for handler in logging.getLogger().handlers: handler.flush()
-    assert "release-secret" not in log.read_text(encoding="utf-8")
+    log_text = log.read_text(encoding="utf-8")
+    assert "release-secret" not in log_text
+    assert "thread=MainThread" in log_text
+    live = read_live_logs()
+    assert live and "release-secret" not in live[-1].message
+    assert live[-1].logger == "security" and live[-1].thread == "MainThread"
     store = ConfigurationStore(tmp_path); settings = store.load(); store.save(settings)
     repository = JobRepository(tmp_path / "jobs" / "state.db"); repository.initialize()
     raw = store.path.read_bytes() + repository.database_path.read_bytes()
