@@ -1,6 +1,6 @@
 # ImageForge
 
-ImageForge is a native Windows desktop foundation for safely optimizing website images. Phases 1–4 provide the application shell, durable storage, a crash-recoverable job engine, secure remote connectivity, heuristic website discovery, and persistent image intelligence. It does not yet modify WordPress or remote databases, convert images, or replace/delete production files.
+ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–5 provide the application shell, durable jobs, secure remote discovery, persistent image intelligence, and an offline candidate optimization engine. It does not yet modify WordPress or remote databases or replace/delete production files.
 
 ## Architecture
 
@@ -50,6 +50,16 @@ The inventory builder processes one downloaded file at a time, deletes its tempo
 
 The Images screen reads persisted inventory in pages and shows totals, bytes, format distribution, transparent and animated assets, derivatives, suspicious files, and skipped files. Filters cover each category and supported format; at most 500 matching rows are materialized by the UI at once.
 
+## Offline optimization engine
+
+`OfflineOptimizer` accepts only local files and performs no network operations. For each file it detects and decodes the real format, applies EXIF orientation, generates format-appropriate candidates, decodes and validates every candidate, compares size and visual fidelity, and selects only the smallest candidate that clears configurable byte and percentage savings thresholds. JPEG candidates use quality, progressive encoding, chroma subsampling, and encoder optimization; PNG candidates use lossless compression; photo-like rasters may receive lossy WebP/AVIF candidates while graphics and alpha assets receive lossless WebP candidates. Existing WebP/AVIF inputs are decoded and genuinely re-encoded rather than renamed.
+
+Validation requires a matching encoded signature, successful decoder verification, identical displayed dimensions, unchanged alpha/transparency/semitransparency, retained ICC data when present, and configurable PSNR for lossy output. EXIF orientation is baked into pixels before the orientation tag is removed. Animated inputs are retained to prevent lost frames; animated WebP/AVIF remain skipped. CMYK, LAB, floating-point, 16-bit, HDR-like, suspicious SVG, oversized, decompression-bomb, corrupt, and otherwise uncertain inputs conservatively retain the original.
+
+Candidates are generated under `ProjectData/jobs/<job-id>/processed/.candidates`; only a selected result is moved into `processed`. Originals are never overwritten. The SQLite schema records original/candidate paths and bytes, actual format, encoder parameters, dimensions, alpha metrics, checksum, validation status, savings, and the decision reason. Safe SVG optimization removes only non-visual `metadata`/`desc` elements, reparses the XML, requires meaningful savings, and never rasterizes the document.
+
+Processing is incremental through `optimize_many`, and `ResourceManager` limits concurrent decoders and per-image pixels. Configurable file-byte, pixel, worker, savings, fidelity, and elapsed-time limits protect local resources. Each result is persisted independently so thousands of files do not need to remain in memory.
+
 ## Installation and running
 
 Python 3.11 or newer is recommended.
@@ -96,4 +106,4 @@ Keep UI work on the Qt main thread and all expensive or blocking work in workers
 
 ## Roadmap
 
-Future phases will add optimization decisions and conversion, WordPress reference updates, production verification, rollback, and only then guarded original cleanup. Although adapter and metadata methods establish future-compatible contracts, Phase 4 only inventories and analyzes; remote database changes, production uploads, conversion, raster-to-vector conversion, and deletion remain out of scope.
+Future phases will add upload planning, WordPress reference updates, production verification, rollback, and only then guarded original cleanup. Phase 5 produces local candidates only; remote database changes, production uploads, raster-to-vector conversion, original replacement, and deletion remain out of scope.

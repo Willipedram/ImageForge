@@ -11,7 +11,7 @@ from typing import Any
 
 from app.core.jobs import ItemStatus, Job, JobItem, JobStatus, UNFINISHED_JOB_STATES, utc_now
 
-DATABASE_SCHEMA_VERSION = 2
+DATABASE_SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -74,9 +74,23 @@ CREATE TABLE IF NOT EXISTS image_inventory (
 CREATE INDEX IF NOT EXISTS idx_inventory_job_format ON image_inventory(job_id, detected_format);
 CREATE INDEX IF NOT EXISTS idx_inventory_job_class ON image_inventory(job_id, asset_class);
 CREATE INDEX IF NOT EXISTS idx_inventory_job_parent ON image_inventory(job_id, parent_path);
+CREATE TABLE IF NOT EXISTS optimization_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    original_path TEXT NOT NULL, original_bytes INTEGER NOT NULL,
+    candidate_path TEXT, candidate_format TEXT, candidate_bytes INTEGER,
+    quality_parameters TEXT NOT NULL, width INTEGER, height INTEGER,
+    has_alpha INTEGER NOT NULL, transparency_ratio REAL, has_semitransparency INTEGER NOT NULL,
+    checksum TEXT, validation_passed INTEGER NOT NULL, validation_reason TEXT NOT NULL,
+    savings_bytes INTEGER NOT NULL, savings_ratio REAL NOT NULL,
+    decision TEXT NOT NULL, decision_reason TEXT NOT NULL, created_at TEXT NOT NULL,
+    UNIQUE(job_id, original_path)
+);
+CREATE INDEX IF NOT EXISTS idx_optimization_job_decision ON optimization_results(job_id, decision);
 """
 
 INVENTORY_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS image_inventory"):]
+OPTIMIZATION_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS optimization_results"):]
 
 
 class TargetLockedError(RuntimeError):
@@ -113,7 +127,10 @@ class JobRepository:
                 connection.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
             elif version == 1:
                 connection.executescript(INVENTORY_SCHEMA)
-                connection.execute("PRAGMA user_version = 2")
+                connection.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
+            elif version == 2:
+                connection.executescript(OPTIMIZATION_SCHEMA)
+                connection.execute("PRAGMA user_version = 3")
 
     def save(self, job: Job, connection: sqlite3.Connection | None = None) -> None:
         job.validate()

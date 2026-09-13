@@ -36,6 +36,10 @@ class AppSettings:
     retry_count: int = 3
     retry_base_delay_seconds: float = 1.0
     retry_maximum_delay_seconds: float = 60.0
+    optimization_max_pixels: int = 80_000_000
+    optimization_max_file_mb: int = 512
+    optimization_timeout_seconds: float = 120.0
+    minimum_savings_percent: float = 5.0
     backup_retention_days: int = 30
     logging_level: str = "INFO"
 
@@ -50,6 +54,11 @@ class AppSettings:
             raise ValueError("retry_count must be between 1 and 20")
         if self.retry_base_delay_seconds < 0 or self.retry_maximum_delay_seconds < 0:
             raise ValueError("retry delays cannot be negative")
+        if min(self.optimization_max_pixels, self.optimization_max_file_mb,
+               self.optimization_timeout_seconds) <= 0:
+            raise ValueError("optimization resource limits must be positive")
+        if not 0 <= self.minimum_savings_percent < 100:
+            raise ValueError("minimum_savings_percent must be between 0 and 100")
         if self.backup_retention_days < 1:
             raise ValueError("backup_retention_days must be positive")
         if self.logging_level.upper() not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
