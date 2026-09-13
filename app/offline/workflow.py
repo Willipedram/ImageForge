@@ -5,14 +5,12 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
-import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from uuid import uuid5, NAMESPACE_URL
 
 from app.core.engine import JobEngine
 from app.core.jobs import JobStatus
-from app.database.jobs import JobRepository
 from app.database.offline import OfflineRepository
 from app.image.intelligence import detect_format
 from app.image.optimization_models import OptimizationDecision

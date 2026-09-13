@@ -10,10 +10,9 @@ import pytest
 from app.core.engine import JobEngine
 from app.core.jobs import JobStatus
 from app.database.jobs import DATABASE_SCHEMA_VERSION, JobRepository
-from app.database.offline import OfflineRepository
 from app.image.optimization_models import OptimizationDecision, OptimizationResult
 from app.offline.models import LocalItemStatus
-from app.offline.workflow import OfflineWorkflow, SourceChangedError
+from app.offline.workflow import OfflineWorkflow
 
 
 def checksum(path: Path) -> str:
@@ -157,7 +156,7 @@ def test_offline_report_and_database_schema(workflow, tmp_path):
     assert report.original_bytes > report.final_bytes
     assert report.savings_bytes == report.original_bytes - report.final_bytes
     assert report.reduction_percent > 0 and report.formats_selected == {"SVG": 2}
-    assert DATABASE_SCHEMA_VERSION == 8
+    assert DATABASE_SCHEMA_VERSION == 9
 
 
 def test_cancel_preserves_sources_and_proposals(workflow, tmp_path):
@@ -183,4 +182,4 @@ def test_database_migrates_version_four_to_offline_state(tmp_path):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert {"offline_runs", "local_items"} <= tables
-    assert version == 8
+    assert version == 9

@@ -68,7 +68,6 @@ def discover_wordpress_tables(table_names: Iterable[str]) -> WordPressTables | N
     if not candidates:
         return None
     prefix = min(candidates, key=len)
-    core = {prefix + suffix for suffix in ("posts", "postmeta", "options", "termmeta")}
     relevant_suffixes = ("terms", "term_taxonomy", "woocommerce_attribute_taxonomies")
     additional = tuple(sorted(prefix + suffix for suffix in relevant_suffixes if prefix + suffix in names))
     return WordPressTables(

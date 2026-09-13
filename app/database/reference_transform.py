@@ -6,7 +6,6 @@ import json
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from html import unescape
 from urllib.parse import quote, unquote
 
 from app.database.wordpress_serialization import PHPArray, PHPSerializationError, dumps, loads

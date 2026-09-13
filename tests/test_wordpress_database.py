@@ -3,15 +3,14 @@ from __future__ import annotations
 import gzip
 import json
 import sqlite3
-from pathlib import Path
 
 import pytest
 
 from app.core.engine import JobEngine
 from app.database.jobs import DATABASE_SCHEMA_VERSION, JobRepository
 from app.database.reference_transform import ChangeType, transform_value
-from app.database.wordpress import LogicalDatabaseBackup, WordPressChangeRepository, WordPressReferenceUpdater
-from app.database.wordpress_serialization import PHPArray, PHPSerializationError, dumps, loads
+from app.database.wordpress import LogicalDatabaseBackup, WordPressReferenceUpdater
+from app.database.wordpress_serialization import PHPArray, dumps, loads
 from app.online.models import ReferenceChange
 
 OLD = "/wp-content/uploads/2026/image.jpg"
@@ -179,4 +178,4 @@ def test_schema_migrates_six_to_reference_tables(tmp_path):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert {"database_reference_changes", "reference_edges"} <= tables
-    assert version == DATABASE_SCHEMA_VERSION == 8
+    assert version == DATABASE_SCHEMA_VERSION == 9

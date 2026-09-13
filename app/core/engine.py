@@ -13,6 +13,7 @@ from app.core.jobs import (
     JobStatus, utc_now, validate_transition,
 )
 from app.core.retry import ErrorClassification, RetryPolicy
+from app.core.runtime_versions import runtime_versions_json
 from app.database.jobs import JobRepository
 
 Reconciler = Callable[[JobItem], ItemStatus | None]
@@ -46,6 +47,8 @@ class JobEngine:
         with self.repository.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self.repository.save(job, connection)
+            connection.execute("INSERT INTO job_runtime_versions(job_id,versions,created_at) VALUES(?,?,?)",
+                               (job.id, runtime_versions_json(), utc_now()))
             self.repository.acquire_lock(connection, normalized, job.id)
             connection.execute(
                 "INSERT INTO job_stages(job_id,stage,entered_at) VALUES(?,?,?)",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,8 @@ def default_project_data_path() -> Path:
     override = os.environ.get(ENV_PROJECT_DATA)
     if override:
         return Path(override).expanduser().resolve()
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "ProjectData"
     return Path(__file__).resolve().parents[2] / "ProjectData"
 
 

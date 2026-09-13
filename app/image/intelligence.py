@@ -10,7 +10,6 @@ import struct
 import xml.etree.ElementTree as ET
 import zlib
 from pathlib import Path, PurePosixPath
-from typing import Any
 
 from app.image.models import AssetClass, ImageRecord
 

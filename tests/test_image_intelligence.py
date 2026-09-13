@@ -9,7 +9,7 @@ import pytest
 from app.core.engine import JobEngine
 from app.database.inventory import InventoryRepository
 from app.database.jobs import DATABASE_SCHEMA_VERSION, JobRepository
-from app.image.intelligence import ImageAnalyzer, detect_format
+from app.image.intelligence import ImageAnalyzer
 from app.image.inventory import InventoryBuilder
 from app.image.models import AssetClass, ImageRecord
 from app.image.wordpress import AttachmentMetadata, discover_wordpress_tables, map_derivatives
@@ -132,7 +132,7 @@ def test_database_migrates_version_one_to_inventory_schema(tmp_path):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert "image_inventory" in tables
-    assert version == DATABASE_SCHEMA_VERSION == 8
+    assert version == DATABASE_SCHEMA_VERSION == 9
 
 
 def test_inventory_builder_streams_files_and_maps_derivatives(inventory):

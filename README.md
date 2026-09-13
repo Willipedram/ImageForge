@@ -1,6 +1,6 @@
 # ImageForge
 
-ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–11 provide durable jobs, remote discovery, image intelligence, auditable decisions, local-folder optimization, and a checkpointed production deployment pipeline.
+ImageForge 1.0.0 is a native Windows desktop system for safely optimizing website images. It provides durable jobs, remote discovery, image intelligence, auditable decisions, local-folder optimization, and a checkpointed production deployment pipeline.
 
 ## Architecture
 
@@ -39,7 +39,7 @@ Retries use configurable attempt counts and capped exponential backoff. Errors a
 
 The protocol-neutral `RemoteServer` interface exposes connect, disconnect, list, stat, download, upload, delete, rename, exists, mkdir, checksum, and bounded-prefix operations. FTP and explicit-TLS FTPS use the Python standard library; SFTP uses Paramiko with system SSH host-key verification enabled by default. SFTP is shown first in the connection UI. Protocol objects do not escape the adapter boundary, and bounded retry/reconnect behavior reuses a single logical connection rather than creating a pool.
 
-Credentials exist only in an in-memory `RuntimeCredentials` object whose password is excluded from representations. The password field is cleared as soon as a background discovery worker is created. Configuration, SQLite state, manifests, and logs never receive credentials. A credential-provider contract exists for a future Windows Credential Manager/DPAPI implementation; its current runtime provider refuses persistence.
+Credentials exist only in an in-memory `RuntimeCredentials` object whose password is excluded from representations. The password field is cleared as soon as a background discovery worker is created. Configuration, SQLite state, manifests, and logs never receive credentials. Runtime-only sessions refuse persistence; Windows builds can explicitly store credentials through Windows Credential Manager/DPAPI.
 
 The Server Connection screen tests connectivity, authentication, listing, read access, local disk space, ProjectData, and website discovery on a `QThread`. Its normal preflight is read-only. A separate diagnostic API supports an explicitly requested temporary write/delete permission test and always attempts cleanup; the application UI does not invoke that test in this phase.
 
@@ -147,11 +147,19 @@ The command-line option takes precedence over the `IMAGEFORGE_PROJECT_DATA` envi
 
 ## ProjectData and upgrades
 
-By default, `ProjectData` is beside the source/application directory. It contains `jobs`, `backups`, `logs`, `cache`, `config`, `database`, and `manifests`. Source replacement never removes it, so a new ImageForge version can point at the same directory. `data_schema.json` records `data_schema_version = 1` (in JSON form), and startup refuses data created by a newer unsupported application.
+By default, `ProjectData` is beside the source/application directory. It contains `jobs`, `backups`, `logs`, `cache`, `config`, `database`, and `manifests`. Source replacement never removes it, so a new ImageForge version can point at the same directory. `data_schema.json` records `data_schema_version = 2` (in JSON form), and startup refuses data created by a newer unsupported application.
 
 The schema manager is designed to require an explicit migration for each version. Before a future migration it copies durable content to a timestamped backup, applies migrations incrementally, verifies the final version, and logs completion. Logs rotate in `ProjectData/logs/imageforge.log`; SQLite job state lives in `ProjectData/jobs/state.db`.
 
-Configuration contains only UI and operational preferences: language, theme, optimization profile, worker and retry limits, capped retry delays, retention, and logging level. Passwords, tokens, private keys, and database credentials are unsupported. A later Windows Credential Manager integration will own secrets.
+Configuration contains only UI and operational preferences: language, theme, optimization profile, worker and retry limits, capped retry delays, retention, and logging level. Passwords, tokens, private keys, and database credentials are never written there. Runtime-only sessions remain available; packaged Windows builds can use Windows Credential Manager/DPAPI.
+
+## Release documentation
+
+- [Installation and Windows executable build](INSTALL.md)
+- [Architecture and recovery model](ARCHITECTURE.md)
+- [Development and release process](DEVELOPMENT.md)
+- [Security policy](SECURITY.md)
+- [Release history](CHANGELOG.md)
 
 ## Development
 
@@ -165,4 +173,4 @@ Keep UI work on the Qt main thread and all expensive or blocking work in workers
 
 ## Roadmap
 
-Phase 11 adds the production monitoring and adaptive desktop experience on top of guarded cleanup and job-ID rollback. Future work may add provider-specific cache purge integrations, but cache invalidation will remain explicit and independently verified. Raster-to-vector conversion remains out of scope.
+Version 1.0.0 completes the production foundation, QA, packaging, monitoring, guarded cleanup, and job-ID rollback. Provider-specific cache purge integrations and raster-to-vector conversion remain intentionally out of scope.

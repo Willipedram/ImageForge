@@ -7,7 +7,7 @@ import gzip
 import hashlib
 import json
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal

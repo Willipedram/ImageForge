@@ -68,7 +68,7 @@ class ProjectDataManager:
         logging.getLogger(__name__).info("Created pre-migration backup at %s", backup)
 
         version = source_version
-        migrations: dict[int, Callable[[Path], None]] = {}
+        migrations: dict[int, Callable[[Path], None]] = {1: self._migrate_v1_to_v2}
         while version < DATA_SCHEMA_VERSION:
             migration = migrations.get(version)
             if migration is None:
@@ -79,3 +79,13 @@ class ProjectDataManager:
         if self.schema_version() != DATA_SCHEMA_VERSION:
             raise ProjectDataError("ProjectData migration verification failed.")
         logging.getLogger(__name__).info("Migrated ProjectData schema to %d", version)
+
+    @staticmethod
+    def _migrate_v1_to_v2(root: Path) -> None:
+        """Add durable release metadata without moving or deleting user content."""
+        policy = root / "config" / "data_policy.json"
+        if not policy.exists():
+            temporary = policy.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"format": 1, "project_data_external": True,
+                "automatic_source_cleanup": False}, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(policy)

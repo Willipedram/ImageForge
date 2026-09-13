@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import sqlite3
 from pathlib import Path, PurePosixPath
 
@@ -11,7 +10,6 @@ from app.core.engine import JobEngine
 from app.core.jobs import JobStatus
 from app.core.retry import RetryPolicy
 from app.database.jobs import DATABASE_SCHEMA_VERSION, JobRepository
-from app.database.online import OnlineRepository
 from app.image.optimization_models import OptimizationDecision, OptimizationResult
 from app.online.models import OnlineItemStatus, ReferenceUpdater
 from app.online.workflow import OnlineWorkflow
@@ -24,7 +22,7 @@ class FakeServer(RemoteServer):
                       "/site/wp-content/uploads/2026/photo.jpg": b"original-jpeg"}
         self.directories = {"/", "/site", "/site/wp-admin", "/site/wp-includes", "/site/wp-content",
                             "/site/wp-content/uploads", "/site/wp-content/uploads/2026"}
-        self._connected = False; self.checksums = checksums; self.fail_upload_once = False
+        self._connected = False; self.checksums = checksums; self.fail_upload_once = False; self.truncate_upload = False
 
     @property
     def connected(self): return self._connected
@@ -50,7 +48,8 @@ class FakeServer(RemoteServer):
     def upload(self, source, remote_path):
         if self.fail_upload_once:
             self.fail_upload_once = False; raise ConnectionError("temporary disconnect")
-        self.files[remote_path] = Path(source).read_bytes() if isinstance(source, Path) else source.read()
+        data = Path(source).read_bytes() if isinstance(source, Path) else source.read()
+        self.files[remote_path] = data[: max(1, len(data) // 2)] if self.truncate_upload else data
     def delete(self, path): self.files.pop(path, None)
     def rename(self, source, destination): self.files[destination] = self.files.pop(source)
     def exists(self, path): return path in self.files or path in self.directories
@@ -118,6 +117,15 @@ def test_upload_retries_without_touching_original(online):
     assert server.files["/site/wp-content/uploads/2026/photo.jpg"] == b"original-jpeg"
 
 
+def test_incomplete_upload_fails_verification_and_preserves_original(online):
+    workflow, server, updater, _ = online; server.truncate_upload = True
+    job_id = workflow.create("incomplete.test")
+    with pytest.raises(IOError, match="staging verification"):
+        workflow.run(job_id)
+    assert server.files["/site/wp-content/uploads/2026/photo.jpg"] == b"original-jpeg"
+    assert not updater.applied
+
+
 def test_verification_without_server_checksum_streams_candidate(online):
     workflow, server, _, _ = online; server.checksums = False
     job_id = workflow.create("no-checksum.test")
@@ -171,4 +179,4 @@ def test_schema_migrates_five_to_online_tables(tmp_path):
         tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert {"online_runs", "online_items"} <= tables
-    assert version == DATABASE_SCHEMA_VERSION == 8
+    assert version == DATABASE_SCHEMA_VERSION == 9
