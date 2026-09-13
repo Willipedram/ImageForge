@@ -144,9 +144,9 @@ class PreflightService:
             else:
                 missing = ", ".join(discovery.missing_markers) or "WordPress markers"
                 discovery_detail = (
-                    f"WordPress not detected after checking {discovery.directories_checked} directories; "
+                    f"WordPress not detected after checking {len(inspected_paths)} unique directories; "
                     f"closest path: {discovery.closest_path or discovery.search_root}; missing: {missing}; "
-                    f"empty directories: {', '.join(discovery.empty_directories) or 'none'}"
+                    f"empty directories: {', '.join(all_empty_paths) or 'none'}"
                 )
             checks.append(CheckResult("Website discovery", discovery.wordpress, discovery_detail))
             conclusion = (
@@ -167,16 +167,14 @@ class PreflightService:
                 "recommended_action": "locate wp-config.php in DirectAdmin File Manager and update FTP root"
                     if not discovery.wordpress else "continue",
             })
-            log_keypoint(logger, checkpoint, "passed" if discovery.wordpress else "stopped", context={
-                "run": run_id,
-                "search_root": discovery.search_root,
-                "site_root": discovery.site_root,
-                "closest_path": discovery.closest_path,
-                "missing_markers": ", ".join(discovery.missing_markers),
-                "directories_checked": discovery.directories_checked,
-                "empty_directories": ", ".join(discovery.empty_directories),
-                "next": "check DirectAdmin FTP account root" if not discovery.wordpress else None,
-            })
+            # The summary is the single terminal failure record. Avoid a
+            # second STOPPED line with conflicting per-root counters.
+            if discovery.wordpress:
+                log_keypoint(logger, checkpoint, "passed", context={
+                    "run": run_id, "search_root": discovery.search_root,
+                    "site_root": discovery.site_root,
+                    "directories_checked": len(inspected_paths),
+                })
         except Exception as exc:
             log_keypoint(logger, checkpoint, "stopped", error=exc,
                          context={"run": run_id, "root": remote_root})

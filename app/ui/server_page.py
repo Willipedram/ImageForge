@@ -213,14 +213,15 @@ class ServerConnectionPage(QWidget):
 
     def _discovery_help(self, discovery=None) -> list[str]:
         lines = [
-            "The FTP login works, but its accessible directory does not contain the WordPress root markers.",
+            "DIAGNOSIS: FTP authentication works, but no accessible directory contains a WordPress root.",
             "In DirectAdmin > FTP Management, set this account to Domain directory access and use /public_html here,",
             "or set its custom path to the domain's public_html directory. A public_html subdirectory account cannot scan the whole site.",
             "Use the closest path and missing markers shown above to confirm exactly what this FTP account can see.",
         ]
         if discovery and "/public_html" in discovery.empty_directories:
             lines.extend([
-                "Important: /public_html is visible but empty for this FTP account.",
+                "EVIDENCE: /public_html is visible but empty for this FTP account.",
+                "ROOT CAUSE: WordPress files are outside the account root, or are not installed in this domain's document root.",
                 "Open DirectAdmin File Manager, locate wp-config.php, then grant this FTP account access to that exact parent directory.",
             ])
         return lines

@@ -75,6 +75,9 @@ def test_server_page_explains_directadmin_is_not_sftp(tmp_path, qapp):
     assert "visible but empty" in " ".join(page._discovery_help(
         SimpleNamespace(empty_directories=("/public_html",))
     ))
+    assert "ROOT CAUSE" in " ".join(page._discovery_help(
+        SimpleNamespace(empty_directories=("/public_html",))
+    ))
 
 
 def test_theme_system_produces_distinct_professional_palettes():

@@ -199,6 +199,8 @@ def test_preflight_logs_professional_discovery_summary(tmp_path, caplog):
     assert '"skipped_paths": "/logs (non_web_directory)"' in summary
     assert '"empty_paths": "/public_html"' in summary
     assert "FTP-visible public_html is empty" in summary
+    assert sum("status=STOPPED checkpoint=website_discovery" in line
+               for line in caplog.text.splitlines()) == 1
 
 
 def test_metadata_scan_handles_unicode_spaces_and_case_without_downloads(wordpress_server):
