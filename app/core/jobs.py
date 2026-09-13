@@ -22,6 +22,8 @@ class JobStatus(StrEnum):
     DOWNLOADING = "DOWNLOADING"
     OPTIMIZING = "OPTIMIZING"
     VALIDATING = "VALIDATING"
+    PREVIEW = "PREVIEW"
+    APPLYING = "APPLYING"
     UPLOADING = "UPLOADING"
     DB_UPDATING = "DB_UPDATING"
     VERIFYING = "VERIFYING"
@@ -55,6 +57,7 @@ class ItemStatus(StrEnum):
 ACTIVE_JOB_STATES = frozenset({
     JobStatus.PRECHECK, JobStatus.SCANNING, JobStatus.DOWNLOADING,
     JobStatus.OPTIMIZING, JobStatus.VALIDATING, JobStatus.UPLOADING,
+    JobStatus.PREVIEW, JobStatus.APPLYING,
     JobStatus.DB_UPDATING, JobStatus.VERIFYING, JobStatus.CLEANUP,
     JobStatus.CANCELLING,
 })
@@ -78,6 +81,15 @@ JOB_TRANSITIONS.update({
     JobStatus.CANCELLING: frozenset({JobStatus.CANCELLED, JobStatus.RECOVERABLE, JobStatus.FAILED}),
     JobStatus.CANCELLED: frozenset(), JobStatus.COMPLETED: frozenset(), JobStatus.FAILED: frozenset(),
 })
+JOB_TRANSITIONS[JobStatus.VALIDATING] = JOB_TRANSITIONS[JobStatus.VALIDATING] | {JobStatus.PREVIEW}
+JOB_TRANSITIONS[JobStatus.PREVIEW] = frozenset({
+    JobStatus.APPLYING, JobStatus.CANCELLING, JobStatus.FAILED, JobStatus.RECOVERABLE,
+})
+JOB_TRANSITIONS[JobStatus.APPLYING] = frozenset({
+    JobStatus.VERIFYING, JobStatus.CANCELLING, JobStatus.FAILED, JobStatus.RECOVERABLE,
+})
+# Local jobs do not need a network download stage.
+JOB_TRANSITIONS[JobStatus.SCANNING] = JOB_TRANSITIONS[JobStatus.SCANNING] | {JobStatus.OPTIMIZING}
 
 _ITEM_PIPELINE = list(ItemStatus)[:13]
 ITEM_TRANSITIONS: dict[ItemStatus, frozenset[ItemStatus]] = {

@@ -27,6 +27,7 @@ class OptimizationConfig:
     max_workers: int = 2
     decision_profile: str = "SAFE"
     compatible_formats: tuple[str, ...] = ("WEBP", "AVIF")
+    preserve_candidate_previews: bool = False
 
     def __post_init__(self) -> None:
         if not all(1 <= quality <= 100 for quality in (self.jpeg_quality, self.webp_quality, self.avif_quality)):

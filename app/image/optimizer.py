@@ -233,9 +233,9 @@ class OfflineOptimizer:
         )
         assessments = [self._assessment(candidate) for candidate in candidates]
         decision = self.decision_engine.decide(original, assessments)
-        if self.manifests:
-            self.manifests.save(job_id, original_path, original, decision, self.thresholds)
         if decision.selected is None:
+            if self.manifests:
+                self.manifests.save(job_id, original_path, original, decision, self.thresholds)
             self._remove_candidates(candidates)
             return OptimizationResult(
                 job_id, original_path, original_bytes,
@@ -251,7 +251,25 @@ class OfflineOptimizer:
         destination = processed / f"{safe_stem}-{hashlib.sha256(original_path.encode()).hexdigest()[:10]}.{selected.format.casefold()}"
         Path(selected.path).replace(destination)
         selected.path = str(destination)
-        self._remove_candidates(candidate for candidate in candidates if candidate is not selected)
+        decision.selected.path = str(destination)
+        if self.config.preserve_candidate_previews:
+            preview_directory = processed / "previews"
+            preview_directory.mkdir(exist_ok=True)
+            for index, (candidate, assessment) in enumerate(zip(candidates, assessments)):
+                if candidate is selected or not candidate.validation_passed or candidate.format not in {"WEBP", "AVIF"}:
+                    if candidate is not selected:
+                        Path(candidate.path).unlink(missing_ok=True)
+                    continue
+                preview = preview_directory / (
+                    f"{hashlib.sha256(original_path.encode()).hexdigest()[:10]}-"
+                    f"{candidate.format.casefold()}-{index}-{candidate.bytes}{Path(candidate.path).suffix}"
+                )
+                Path(candidate.path).replace(preview)
+                candidate.path = assessment.path = str(preview)
+        else:
+            self._remove_candidates(candidate for candidate in candidates if candidate is not selected)
+        if self.manifests:
+            self.manifests.save(job_id, original_path, original, decision, self.thresholds)
         savings = original_bytes - selected.bytes
         return OptimizationResult(
             job_id, original_path, original_bytes, OptimizationDecision.SELECTED,

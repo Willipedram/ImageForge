@@ -20,5 +20,5 @@ def test_main_window_constructs(tmp_path, qapp):
     repository.initialize()
     window = MainWindow(settings, store, JobEngine(repository))
     assert window.windowTitle().startswith("ImageForge")
-    assert window.pages.count() == 6
+    assert window.pages.count() == 7
     window.close()

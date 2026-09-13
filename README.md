@@ -1,6 +1,6 @@
 # ImageForge
 
-ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–6 provide the application shell, durable jobs, secure remote discovery, persistent image intelligence, offline candidate generation, and an auditable quality/safety decision engine. It does not yet modify WordPress or remote databases or replace/delete production files.
+ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–7 provide durable jobs, remote discovery, image intelligence, auditable decisions, and a complete local-folder optimization workflow. Remote WordPress and production deployment remain future work.
 
 ## Architecture
 
@@ -68,6 +68,16 @@ Quality evaluation uses a pluggable `QualityEvaluator` protocol and a default pi
 
 SQLite schema version 4 stores a canonical decision manifest for every persisted result. Each manifest contains the decision-engine version, profile, exact thresholds, original facts, all candidate assessments and metrics, per-candidate verdicts and rejection reasons, selected format, confidence (`HIGH`, `MEDIUM`, or `LOW`), and final explanation. JSON fields use stable key ordering and compact separators so inputs are reproducible and audits can explain precisely why `ORIGINAL`, `WEBP`, `AVIF`, or `SKIP` was chosen.
 
+## Full offline workflow
+
+The **Offline Optimization** page provides the complete local workflow without creating a server adapter or network connection: select a Windows folder, scan, analyze, optimize, quality-validate, compare, preview, explicitly apply, and view a report. Scanning only records file metadata and checksums. A dry run generates candidates under ProjectData, persists every proposal, and leaves source files byte-for-byte unchanged. The preview shows original, WebP, AVIF, and selected representations where Qt supports the codec, along with dimensions, candidate sizes, savings, confidence, and the full decision reason.
+
+Apply is unavailable without explicit confirmation. Each proposed file is rechecked against its scan-time modification time and SHA-256, copied to an immutable per-job backup, and the backup checksum is verified. The selected candidate is copied to a same-directory temporary file, flushed, checksummed, atomically installed with `os.replace`, and then signature/checksum verified. A format-changing result removes the old extension only after the new file passes final verification. Any failure restores the verified backup; the workflow never deletes an original before a valid replacement exists.
+
+SQLite schema version 5 stores local roots, dry-run state, source identity, per-file stages, candidate identity, backup/target paths, errors, and final status. Checkpoints cover scanning, candidate decisions, backup verification, staging, replacement, final verification, and failures. On restart, the newest unfinished offline job is offered in the UI. Recovery reconciles the actual source, temporary, target, candidate, and backup checksums before continuing, and already completed items are never optimized or applied again.
+
+Progress is emitted from a `QThread` with current image, stage, completed/total counts, percentage, elapsed time, ETA, and files per second. Pause stops scheduling after the current safe file, Resume continues from persisted states, and Cancel preserves all state. Reports include totals, optimized/skipped/failed counts, original/final bytes, savings and reduction, selected-format distribution, duration, and errors. Database reads are paged and optimization remains one-file-at-a-time.
+
 ## Installation and running
 
 Python 3.11 or newer is recommended.
@@ -114,4 +124,4 @@ Keep UI work on the Qt main thread and all expensive or blocking work in workers
 
 ## Roadmap
 
-Future phases will add upload planning, WordPress reference updates, production verification, rollback, and only then guarded original cleanup. Phase 6 produces and selects local candidates only; remote database changes, production uploads, raster-to-vector conversion, original replacement, and deletion remain out of scope.
+Future phases will add upload planning, WordPress reference updates, production verification, remote rollback, and only then guarded remote-original cleanup. Phase 7 can replace local files only after confirmation and verified backup; remote database changes, production uploads, raster-to-vector conversion, and remote deletion remain out of scope.
