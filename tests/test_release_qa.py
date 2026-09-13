@@ -117,6 +117,8 @@ def test_windows_executable_workflow_publishes_click_to_run_artifact():
     assert 'Get-Command "python.exe"' in build_script
     assert "Python 3.11 or newer was not found" in build_script
     assert "Invoke-NativeCommand" in build_script
+    assert "[switch]$RunTests" in build_script
+    assert "if ($RunTests)" in build_script
     assert "scripts\\build_windows.ps1" in launcher
 
 

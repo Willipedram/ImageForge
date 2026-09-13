@@ -1,3 +1,8 @@
+[CmdletBinding()]
+param(
+    [switch]$RunTests
+)
+
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
@@ -59,8 +64,14 @@ if (-not (Test-Path $BuildPython)) {
 }
 
 Invoke-NativeCommand $BuildPython -m pip install --upgrade pip
-Invoke-NativeCommand $BuildPython -m pip install -r requirements-dev.txt "pywin32>=308"
-Invoke-NativeCommand $BuildPython -m pytest -q
+Invoke-NativeCommand $BuildPython -m pip install -r requirements.txt "pyinstaller>=6.10,<7" "pywin32>=308"
+if ($RunTests) {
+    Write-Host "Running the optional full test suite..."
+    Invoke-NativeCommand $BuildPython -m pip install pytest pytest-qt
+    Invoke-NativeCommand $BuildPython -m pytest -q
+} else {
+    Write-Host "Skipping the optional test suite. Use scripts\build_windows.ps1 -RunTests to include it."
+}
 Invoke-NativeCommand $BuildPython scripts\verify_release.py
 Invoke-NativeCommand $BuildPython -m PyInstaller --noconfirm --clean ImageForge.spec
 
