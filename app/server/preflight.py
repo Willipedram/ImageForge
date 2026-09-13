@@ -33,7 +33,7 @@ class PreflightService:
         self.project_data = project_data
         self.minimum_free_bytes = minimum_free_bytes
 
-    def run(self, remote_root: str) -> PreflightReport:
+    def run(self, remote_root: str, discovery_roots: tuple[str, ...] = ()) -> PreflightReport:
         checks: list[CheckResult] = []
         discovery = None
         try:
@@ -44,7 +44,20 @@ class PreflightService:
             checks.append(CheckResult("Directory listing", True, f"Read {len(entries)} entries"))
             self.server.stat(remote_root)
             checks.append(CheckResult("Remote read access", True, "Root metadata is readable"))
-            discovery = SiteDiscoverer(self.server).discover(remote_root)
+            discoverer = SiteDiscoverer(self.server)
+            discovery = discoverer.discover(remote_root)
+            if not discovery.wordpress:
+                for candidate in discovery_roots:
+                    if candidate == remote_root:
+                        continue
+                    try:
+                        self.server.stat(candidate)
+                        alternative = discoverer.discover(candidate)
+                    except (FileNotFoundError, PermissionError):
+                        continue
+                    if alternative.wordpress:
+                        discovery = alternative
+                        break
             checks.append(CheckResult("Website discovery", discovery.wordpress, discovery.site_root or "WordPress not detected"))
         except Exception as exc:
             checks.append(CheckResult("Remote access", False, str(exc)))

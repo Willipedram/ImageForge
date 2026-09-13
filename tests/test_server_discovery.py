@@ -199,6 +199,22 @@ def test_preflight_is_non_destructive_and_finds_site(wordpress_server, tmp_path)
     assert wordpress_server.download_count == 0
 
 
+def test_preflight_tries_hosting_control_panel_root_when_login_root_is_empty(tmp_path):
+    site = "/domains/safirezaman.com/public_html"
+    tree = {
+        "/": [],
+        site: [file(f"{site}/wp-config.php", "wp-config.php"),
+               directory(f"{site}/wp-admin", "wp-admin"),
+               directory(f"{site}/wp-content", "wp-content"),
+               directory(f"{site}/wp-includes", "wp-includes")],
+        f"{site}/wp-admin": [], f"{site}/wp-content": [], f"{site}/wp-includes": [],
+    }
+    server = FakeServer(tree); server.connect()
+    report = PreflightService(server, tmp_path, minimum_free_bytes=1).run("/", (site,))
+    assert report.discovery.wordpress
+    assert report.discovery.site_root == site
+
+
 def test_credentials_are_ephemeral_and_redacted():
     credentials = RuntimeCredentials("alice", "super-secret")
     config = ConnectionConfig(Protocol.SFTP, "example.com", 22)
