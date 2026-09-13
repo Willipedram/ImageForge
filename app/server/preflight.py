@@ -91,7 +91,15 @@ class PreflightService:
                     if alternative.wordpress:
                         discovery = alternative
                         break
-            checks.append(CheckResult("Website discovery", discovery.wordpress, discovery.site_root or "WordPress not detected"))
+            if discovery.wordpress:
+                discovery_detail = discovery.site_root or "WordPress detected"
+            else:
+                missing = ", ".join(discovery.missing_markers) or "WordPress markers"
+                discovery_detail = (
+                    f"WordPress not detected after checking {discovery.directories_checked} directories; "
+                    f"closest path: {discovery.closest_path or discovery.search_root}; missing: {missing}"
+                )
+            checks.append(CheckResult("Website discovery", discovery.wordpress, discovery_detail))
             log_keypoint(logger, checkpoint, "passed" if discovery.wordpress else "stopped")
         except Exception as exc:
             log_keypoint(logger, checkpoint, "stopped", error=exc)

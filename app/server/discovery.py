@@ -40,6 +40,9 @@ class SiteDiscovery:
     plugins: str | None = None
     woocommerce: bool = False
     elementor: bool = False
+    closest_path: str | None = None
+    missing_markers: tuple[str, ...] = ()
+    directories_checked: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +65,8 @@ class SiteDiscoverer:
         root = normalize_remote_path(search_root)
         queue = deque([(root, 0)])
         visited: set[str] = set()
+        best_path, best_score = root, -1
+        best_missing: tuple[str, ...] = ()
         while queue and len(visited) < self.options.max_directories:
             directory, depth = queue.popleft()
             key = directory
@@ -77,9 +82,19 @@ class SiteDiscoverer:
             content_entry = next(
                 (names[name.casefold()] for name in self.options.content_names if name.casefold() in names), None
             )
-            wordpress = structural.issubset(names) and content_entry is not None and any(
-                marker.casefold() in names for marker in self.options.root_markers
+            has_root_marker = any(marker.casefold() in names for marker in self.options.root_markers)
+            missing = tuple(
+                label for present, label in (
+                    ("wp-admin" in names, "wp-admin"),
+                    ("wp-includes" in names, "wp-includes"),
+                    (content_entry is not None, "wp-content"),
+                    (has_root_marker, "wp-config.php/wp-load.php/index.php"),
+                ) if not present
             )
+            score = 4 - len(missing)
+            if score > best_score:
+                best_path, best_score, best_missing = directory, score, missing
+            wordpress = not missing
             if wordpress:
                 content = content_entry.path
                 uploads = self._first_existing(content, self.options.uploads_names)
@@ -91,6 +106,7 @@ class SiteDiscoverer:
                     uploads, themes, plugins,
                     bool(plugins and self.server.exists(safe_join(plugins, "woocommerce"))),
                     bool(plugins and self.server.exists(safe_join(plugins, "elementor"))),
+                    directory, (), len(visited),
                 )
             if depth < self.options.max_depth:
                 children = sorted(
@@ -98,7 +114,10 @@ class SiteDiscoverer:
                     key=lambda entry: self._priority(entry.name),
                 )
                 queue.extend((entry.path, depth + 1) for entry in children)
-        return SiteDiscovery(root, None, False)
+        return SiteDiscovery(
+            root, None, False, missing_markers=best_missing,
+            closest_path=best_path, directories_checked=len(visited),
+        )
 
     def _first_existing(self, parent: str, names: tuple[str, ...]) -> str | None:
         for name in names:

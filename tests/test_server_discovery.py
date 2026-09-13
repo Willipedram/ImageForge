@@ -145,6 +145,21 @@ def test_discovery_supports_configurable_content_and_upload_names():
     assert result.uploads == "/site/assets/pictures"
 
 
+def test_failed_discovery_reports_closest_path_and_missing_markers():
+    tree = {
+        "/": [directory("/public_html", "public_html")],
+        "/public_html": [directory("/public_html/wp-content", "wp-content"),
+                          file("/public_html/index.php", "index.php")],
+        "/public_html/wp-content": [],
+    }
+    server = FakeServer(tree); server.connect()
+    result = SiteDiscoverer(server).discover("/")
+    assert not result.wordpress
+    assert result.closest_path == "/public_html"
+    assert result.missing_markers == ("wp-admin", "wp-includes")
+    assert result.directories_checked == 3
+
+
 def test_metadata_scan_handles_unicode_spaces_and_case_without_downloads(wordpress_server):
     images = list(RemoteImageScanner(wordpress_server).scan("/clients/Acme Site/wp-content/uploads"))
     assert [image.path for image in images] == [

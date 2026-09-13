@@ -215,6 +215,7 @@ class ServerConnectionPage(QWidget):
             "The FTP login works, but its accessible directory does not contain the WordPress root markers.",
             "In DirectAdmin > FTP Management, set this account to Domain directory access and use /public_html here,",
             "or set its custom path to the domain's public_html directory. A public_html subdirectory account cannot scan the whole site.",
+            "Use the closest path and missing markers shown above to confirm exactly what this FTP account can see.",
         ]
 
     def _credential_id(self) -> str:
