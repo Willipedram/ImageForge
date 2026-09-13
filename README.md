@@ -1,6 +1,6 @@
 # ImageForge
 
-ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–7 provide durable jobs, remote discovery, image intelligence, auditable decisions, and a complete local-folder optimization workflow. Remote WordPress and production deployment remain future work.
+ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–8 provide durable jobs, remote discovery, image intelligence, auditable decisions, local-folder optimization, and a checkpointed production deployment pipeline.
 
 ## Architecture
 
@@ -12,6 +12,8 @@ app/
 ├── database/            # transactional SQLite state repository
 ├── image/               # image analysis, classification, inventory building
 ├── server/              # FTP/FTPS/SFTP, preflight, discovery, scanning
+├── online/              # staged upload, reference update, verification pipeline
+├── offline/             # local dry-run, apply, and recovery workflow
 ├── storage/             # ProjectData lifecycle and schema control
 ├── ui/                  # PySide6 window, pages, dashboard, styling
 ├── utils/               # human/structured logging
@@ -74,9 +76,17 @@ The **Offline Optimization** page provides the complete local workflow without c
 
 Apply is unavailable without explicit confirmation. Each proposed file is rechecked against its scan-time modification time and SHA-256, copied to an immutable per-job backup, and the backup checksum is verified. The selected candidate is copied to a same-directory temporary file, flushed, checksummed, atomically installed with `os.replace`, and then signature/checksum verified. A format-changing result removes the old extension only after the new file passes final verification. Any failure restores the verified backup; the workflow never deletes an original before a valid replacement exists.
 
-SQLite schema version 5 stores local roots, dry-run state, source identity, per-file stages, candidate identity, backup/target paths, errors, and final status. Checkpoints cover scanning, candidate decisions, backup verification, staging, replacement, final verification, and failures. On restart, the newest unfinished offline job is offered in the UI. Recovery reconciles the actual source, temporary, target, candidate, and backup checksums before continuing, and already completed items are never optimized or applied again.
+SQLite schema version 6 stores local roots, dry-run state, source identity, per-file stages, candidate identity, backup/target paths, errors, and final status. Checkpoints cover scanning, candidate decisions, backup verification, staging, replacement, final verification, and failures. On restart, the newest unfinished offline job is offered in the UI. Recovery reconciles the actual source, temporary, target, candidate, and backup checksums before continuing, and already completed items are never optimized or applied again.
 
 Progress is emitted from a `QThread` with current image, stage, completed/total counts, percentage, elapsed time, ETA, and files per second. Pause stops scheduling after the current safe file, Resume continues from persisted states, and Cancel preserves all state. Reports include totals, optimized/skipped/failed counts, original/final bytes, savings and reduction, selected-format distribution, duration, and errors. Database reads are paged and optimization remains one-file-at-a-time.
+
+## Online website pipeline
+
+The **Online Pipeline** integrates preflight, heuristic WordPress discovery, streaming inventory, verified downloads, local optimization and quality decisions, local backups, staging uploads, remote verification, transactional reference updates, final verification, and deferred cleanup. Image bodies are processed one at a time and state is committed after every safe boundary. Network calls use the configured capped exponential retry policy and reconnect a single server adapter rather than creating connection pools.
+
+Production candidates are uploaded below `optimization-temp/<job-id>/` and checked for existence, size, checksum, signature, and readability. When a server cannot provide checksums, ImageForge streams the staged object back into ProjectData for SHA-256 and signature validation. Only a verified staging object can be atomically renamed into its production sidecar path. Existing, different sidecars cause a safe conflict instead of being overwritten. The original remote image is downloaded to `ProjectData/backups/online/<job-id>/` and checksum-verified before upload, remains present after deployment, and is never deleted in Phase 8.
+
+A `ReferenceUpdater` boundary requires prepare, transactional apply, and verify operations. The production WordPress adapter is injected with runtime credentials; credentials are never represented in the online manifest. SQLite persists original/candidate paths, sizes and checksums, selected format and reason, upload/verification/database states, retries, errors, and stage checkpoints. Restart reconciliation inspects local partial downloads, staging objects, and promoted sidecars before scheduling work again. The Online Pipeline page runs the coordinator on a `QThread` and displays stage, current file, byte/file progress, elapsed time, ETA, retries, errors, and per-item manifest state.
 
 ## Installation and running
 
@@ -124,4 +134,4 @@ Keep UI work on the Qt main thread and all expensive or blocking work in workers
 
 ## Roadmap
 
-Future phases will add upload planning, WordPress reference updates, production verification, remote rollback, and only then guarded remote-original cleanup. Phase 7 can replace local files only after confirmation and verified backup; remote database changes, production uploads, raster-to-vector conversion, and remote deletion remain out of scope.
+Future phases will add production rollback orchestration and guarded remote-original cleanup only after reference and serving verification. Phase 8 deliberately retains every remote original and every verified local backup; raster-to-vector conversion remains out of scope.

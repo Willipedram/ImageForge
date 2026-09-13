@@ -78,7 +78,7 @@ def test_optimization_result_round_trip_and_schema_migration(tmp_path):
         table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='optimization_results'"
         ).fetchone()
-    assert version == DATABASE_SCHEMA_VERSION == 5 and table
+    assert version == DATABASE_SCHEMA_VERSION == 6 and table
 
 
 def test_version_two_database_migrates_to_results_table(tmp_path):
@@ -87,7 +87,7 @@ def test_version_two_database_migrates_to_results_table(tmp_path):
         connection.execute("PRAGMA user_version=2")
     JobRepository(database).initialize()
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='optimization_results'"
         ).fetchone()

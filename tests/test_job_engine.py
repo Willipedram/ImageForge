@@ -22,7 +22,7 @@ def test_database_contains_all_durable_tables(repository):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert {"jobs", "job_stages", "job_items", "events", "errors", "checkpoints"} <= tables
-    assert version == 5
+    assert version == 6
 
 
 def test_state_machine_rejects_skipped_job_stage(repository):

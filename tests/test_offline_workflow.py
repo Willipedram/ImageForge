@@ -157,7 +157,7 @@ def test_offline_report_and_database_schema(workflow, tmp_path):
     assert report.original_bytes > report.final_bytes
     assert report.savings_bytes == report.original_bytes - report.final_bytes
     assert report.reduction_percent > 0 and report.formats_selected == {"SVG": 2}
-    assert DATABASE_SCHEMA_VERSION == 5
+    assert DATABASE_SCHEMA_VERSION == 6
 
 
 def test_cancel_preserves_sources_and_proposals(workflow, tmp_path):
@@ -183,4 +183,4 @@ def test_database_migrates_version_four_to_offline_state(tmp_path):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert {"offline_runs", "local_items"} <= tables
-    assert version == 5
+    assert version == 6

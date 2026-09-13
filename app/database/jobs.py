@@ -11,7 +11,7 @@ from typing import Any
 
 from app.core.jobs import ItemStatus, Job, JobItem, JobStatus, UNFINISHED_JOB_STATES, utc_now
 
-DATABASE_SCHEMA_VERSION = 5
+DATABASE_SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -115,12 +115,30 @@ CREATE TABLE IF NOT EXISTS local_items (
     UNIQUE(job_id, relative_path)
 );
 CREATE INDEX IF NOT EXISTS idx_local_items_job_status ON local_items(job_id, status, id);
+CREATE TABLE IF NOT EXISTS online_runs (
+    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+    remote_root TEXT NOT NULL, site_root TEXT, uploads_root TEXT,
+    staging_root TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS online_items (
+    id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    remote_path TEXT NOT NULL, status TEXT NOT NULL, original_bytes INTEGER NOT NULL,
+    original_checksum TEXT, local_path TEXT, local_checksum TEXT,
+    candidate_path TEXT, candidate_format TEXT, candidate_bytes INTEGER,
+    candidate_checksum TEXT, production_path TEXT, staging_path TEXT,
+    decision TEXT, decision_reason TEXT, upload_status TEXT NOT NULL,
+    verification_status TEXT NOT NULL, database_status TEXT NOT NULL,
+    retry_count INTEGER NOT NULL DEFAULT 0, error TEXT, updated_at TEXT NOT NULL,
+    UNIQUE(job_id, remote_path)
+);
+CREATE INDEX IF NOT EXISTS idx_online_items_job_status ON online_items(job_id, status, id);
 """
 
 INVENTORY_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS image_inventory"):]
 OPTIMIZATION_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS optimization_results"):]
 DECISION_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS decision_manifests"):]
 OFFLINE_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS offline_runs"):]
+ONLINE_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS online_runs"):]
 
 
 class TargetLockedError(RuntimeError):
@@ -174,6 +192,10 @@ class JobRepository:
             elif version == 4:
                 connection.executescript(OFFLINE_SCHEMA)
                 connection.execute("PRAGMA user_version = 5")
+                version = 5
+            if version == 5:
+                connection.executescript(ONLINE_SCHEMA)
+                connection.execute("PRAGMA user_version = 6")
 
     def save(self, job: Job, connection: sqlite3.Connection | None = None) -> None:
         job.validate()

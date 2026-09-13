@@ -132,4 +132,4 @@ def test_auditable_manifest_persists_inputs_thresholds_and_all_verdicts(tmp_path
     assert manifest["profile"] == "SAFE" and len(manifest["verdicts"]) == 2
     assert manifest["candidate_assessments"][0]["metrics"]["ssim"] == .99
     assert manifest["engine_version"] == "1"
-    assert DATABASE_SCHEMA_VERSION == 5
+    assert DATABASE_SCHEMA_VERSION == 6
