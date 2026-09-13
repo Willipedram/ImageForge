@@ -122,6 +122,18 @@ def test_windows_executable_workflow_publishes_click_to_run_artifact():
     assert "scripts\\build_windows.ps1" in launcher
 
 
+def test_release_verification_works_without_git(monkeypatch, capsys):
+    from scripts import verify_release
+
+    monkeypatch.setattr(
+        verify_release.subprocess,
+        "check_output",
+        lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError("git")),
+    )
+    assert verify_release.main() == 0
+    assert "tracked-file audit was skipped" in capsys.readouterr().out
+
+
 def test_job_database_v8_migrates_and_records_runtime_versions(tmp_path):
     database = tmp_path / "state.db"
     JobRepository(database).initialize()

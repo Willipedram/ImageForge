@@ -88,6 +88,8 @@ dist\ImageOptimizer.exe
 
 اگر خطای `Python 3.11 or newer was not found` دیدی، یعنی Python نصب نیست یا داخل PATH قرار نگرفته. Python را از [وب‌سایت رسمی Python](https://www.python.org/downloads/windows/) نصب کن و دوباره `build_windows.bat` را اجرا کن.
 
+برای ساخت برنامه لازم نیست Git نصب داشته باشی؛ پوشه‌ای که از فایل ZIP گیت‌هاب Extract کرده‌ای هم قابل استفاده است. اگر Git نصب نباشد، پیام `tracked-file audit was skipped` فقط یک اطلاع‌رسانی است و Build ادامه پیدا می‌کند.
+
 تست کامل توسعه‌دهنده‌ها موقع دابل‌کلیک اجرا نمی‌شود، چون بعضی از آن تست‌ها ممکن است روی نسخه‌های مختلف Windows یا Pillow مشکل جداگانه داشته باشند و جلوی ساخته‌شدن EXE را بگیرند. اگر خودت توسعه‌دهنده‌ای و می‌خواهی Build فقط بعد از رد شدن همه تست‌ها انجام شود، PowerShell را باز کن و این دستور را بزن:
 
 ```powershell

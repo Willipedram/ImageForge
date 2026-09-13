@@ -33,7 +33,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 The script creates an isolated build environment, installs the application dependencies plus PyInstaller and pywin32, runs release checks and a packaged-app startup check, then produces `dist\ImageOptimizer.exe`. The full test suite is intentionally optional because it can include platform-specific development checks that are unrelated to packaging; run `./scripts/build_windows.ps1 -RunTests` when you want it to gate a build.
 
-For a build without the command line, install Python 3.11 or newer (enabling **Add python.exe to PATH**) and double-click `build_windows.bat` in the project folder. The build script supports both the optional `py.exe` launcher and `python.exe`, performs the release and packaged-startup checks, and selects the finished executable in File Explorer. If neither command is available, it stops with installation instructions instead of an unexplained command-not-found error.
+For a build without the command line, install Python 3.11 or newer (enabling **Add python.exe to PATH**) and double-click `build_windows.bat` in the project folder. Git is not required, so this also works from GitHub's extracted source ZIP. The build script supports both the optional `py.exe` launcher and `python.exe`, performs the release and packaged-startup checks, and selects the finished executable in File Explorer. If neither Python command is available, it stops with installation instructions instead of an unexplained command-not-found error.
 
 ## Download the ready-to-run executable
 
