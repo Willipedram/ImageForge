@@ -19,8 +19,8 @@ class OptimizationRepository:
                 """INSERT INTO optimization_results(
                 job_id,original_path,original_bytes,candidate_path,candidate_format,candidate_bytes,
                 quality_parameters,width,height,has_alpha,transparency_ratio,has_semitransparency,
-                checksum,validation_passed,validation_reason,savings_bytes,savings_ratio,decision,decision_reason,created_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                checksum,validation_passed,validation_reason,confidence,savings_bytes,savings_ratio,decision,decision_reason,created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(job_id,original_path) DO UPDATE SET
                 candidate_path=excluded.candidate_path,candidate_format=excluded.candidate_format,
                 candidate_bytes=excluded.candidate_bytes,quality_parameters=excluded.quality_parameters,
@@ -28,6 +28,7 @@ class OptimizationRepository:
                 transparency_ratio=excluded.transparency_ratio,has_semitransparency=excluded.has_semitransparency,
                 checksum=excluded.checksum,validation_passed=excluded.validation_passed,
                 validation_reason=excluded.validation_reason,
+                confidence=excluded.confidence,
                 savings_bytes=excluded.savings_bytes,savings_ratio=excluded.savings_ratio,
                 decision=excluded.decision,decision_reason=excluded.decision_reason,created_at=excluded.created_at""",
                 (
@@ -36,6 +37,7 @@ class OptimizationRepository:
                     result.width, result.height, result.has_alpha, result.transparency_ratio,
                     result.has_semitransparency, result.checksum, result.validation_passed,
                     result.validation_reason,
+                    result.confidence,
                     result.savings_bytes, result.savings_ratio, result.decision.value,
                     result.decision_reason, utc_now(),
                 ),
@@ -56,6 +58,7 @@ class OptimizationRepository:
             transparency_ratio=row["transparency_ratio"], has_semitransparency=bool(row["has_semitransparency"]),
             checksum=row["checksum"], validation_passed=bool(row["validation_passed"]),
             validation_reason=row["validation_reason"],
+            confidence=row["confidence"],
             savings_bytes=row["savings_bytes"], savings_ratio=row["savings_ratio"],
             decision=OptimizationDecision(row["decision"]), decision_reason=row["decision_reason"],
         )

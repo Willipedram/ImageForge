@@ -31,7 +31,7 @@ class AppSettings:
     project_data_path: str
     ui_language: str = "en"
     theme: str = "system"
-    default_optimization_profile: str = "balanced"
+    default_optimization_profile: str = "safe"
     max_workers: int = 4
     retry_count: int = 3
     retry_base_delay_seconds: float = 1.0
@@ -65,6 +65,8 @@ class AppSettings:
             raise ValueError("logging_level is invalid")
         if self.theme not in {"system", "light", "dark"}:
             raise ValueError("theme is invalid")
+        if self.default_optimization_profile not in {"safe", "balanced", "aggressive"}:
+            raise ValueError("default_optimization_profile is invalid")
 
 
 class ConfigurationStore:
@@ -80,6 +82,9 @@ class ConfigurationStore:
         if not self.path.exists():
             return AppSettings.defaults(self.project_data)
         raw: dict[str, Any] = json.loads(self.path.read_text(encoding="utf-8"))
+        legacy_profiles = {"quality": "safe", "maximum_savings": "aggressive"}
+        if raw.get("default_optimization_profile") in legacy_profiles:
+            raw["default_optimization_profile"] = legacy_profiles[raw["default_optimization_profile"]]
         allowed = {field.name for field in fields(AppSettings)}
         settings = AppSettings(**{key: value for key, value in raw.items() if key in allowed})
         settings.validate()

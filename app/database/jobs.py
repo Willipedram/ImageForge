@@ -11,7 +11,7 @@ from typing import Any
 
 from app.core.jobs import ItemStatus, Job, JobItem, JobStatus, UNFINISHED_JOB_STATES, utc_now
 
-DATABASE_SCHEMA_VERSION = 3
+DATABASE_SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -82,15 +82,28 @@ CREATE TABLE IF NOT EXISTS optimization_results (
     quality_parameters TEXT NOT NULL, width INTEGER, height INTEGER,
     has_alpha INTEGER NOT NULL, transparency_ratio REAL, has_semitransparency INTEGER NOT NULL,
     checksum TEXT, validation_passed INTEGER NOT NULL, validation_reason TEXT NOT NULL,
+    confidence TEXT NOT NULL,
     savings_bytes INTEGER NOT NULL, savings_ratio REAL NOT NULL,
     decision TEXT NOT NULL, decision_reason TEXT NOT NULL, created_at TEXT NOT NULL,
     UNIQUE(job_id, original_path)
 );
 CREATE INDEX IF NOT EXISTS idx_optimization_job_decision ON optimization_results(job_id, decision);
+CREATE TABLE IF NOT EXISTS decision_manifests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    original_path TEXT NOT NULL, engine_version TEXT NOT NULL,
+    profile TEXT NOT NULL, thresholds TEXT NOT NULL, original_facts TEXT NOT NULL,
+    candidate_assessments TEXT NOT NULL, verdicts TEXT NOT NULL,
+    selected_format TEXT NOT NULL, confidence TEXT NOT NULL, reason TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(job_id, original_path)
+);
+CREATE INDEX IF NOT EXISTS idx_manifest_job_choice ON decision_manifests(job_id, selected_format);
 """
 
 INVENTORY_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS image_inventory"):]
 OPTIMIZATION_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS optimization_results"):]
+DECISION_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS decision_manifests"):]
 
 
 class TargetLockedError(RuntimeError):
@@ -130,7 +143,17 @@ class JobRepository:
                 connection.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
             elif version == 2:
                 connection.executescript(OPTIMIZATION_SCHEMA)
-                connection.execute("PRAGMA user_version = 3")
+                connection.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
+            elif version == 3:
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(optimization_results)")
+                }
+                if columns and "confidence" not in columns:
+                    connection.execute(
+                        "ALTER TABLE optimization_results ADD COLUMN confidence TEXT NOT NULL DEFAULT 'LOW'"
+                    )
+                connection.executescript(DECISION_SCHEMA)
+                connection.execute("PRAGMA user_version = 4")
 
     def save(self, job: Job, connection: sqlite3.Connection | None = None) -> None:
         job.validate()

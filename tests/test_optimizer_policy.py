@@ -69,7 +69,7 @@ def test_optimization_result_round_trip_and_schema_migration(tmp_path):
     expected = OptimizationResult(
         job.id, "/uploads/a.jpg", 2000, OptimizationDecision.SELECTED, "validated",
         "/local/a.webp", "WEBP", 1000, {"quality": 82}, 100, 50,
-        False, None, False, "abc", True, "Validated", 1000, .5,
+        False, None, False, "abc", True, "Validated", "HIGH", 1000, .5,
     )
     repository.save(expected)
     assert repository.get(job.id, expected.original_path) == expected
@@ -78,7 +78,7 @@ def test_optimization_result_round_trip_and_schema_migration(tmp_path):
         table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='optimization_results'"
         ).fetchone()
-    assert version == DATABASE_SCHEMA_VERSION == 3 and table
+    assert version == DATABASE_SCHEMA_VERSION == 4 and table
 
 
 def test_version_two_database_migrates_to_results_table(tmp_path):
@@ -87,7 +87,21 @@ def test_version_two_database_migrates_to_results_table(tmp_path):
         connection.execute("PRAGMA user_version=2")
     JobRepository(database).initialize()
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='optimization_results'"
         ).fetchone()
+
+
+def test_version_three_adds_confidence_and_decision_manifest(tmp_path):
+    database = tmp_path / "v3.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE optimization_results(id INTEGER PRIMARY KEY, validation_reason TEXT)")
+        connection.execute("PRAGMA user_version=3")
+    JobRepository(database).initialize()
+    with sqlite3.connect(database) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(optimization_results)")}
+        manifests = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='decision_manifests'"
+        ).fetchone()
+    assert "confidence" in columns and manifests

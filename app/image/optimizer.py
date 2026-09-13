@@ -12,22 +12,43 @@ import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 from app.core.resources import ResourceLimitExceeded, ResourceLimits, ResourceManager
+from app.database.decisions import DecisionManifestRepository
 from app.database.optimization import OptimizationRepository
+from app.image.decision import (
+    CandidateAssessment, DecisionProfile, FormatDecisionEngine, OriginalFacts,
+    OutputChoice, PROFILES, ProfileThresholds,
+)
 from app.image.intelligence import detect_format
+from app.image.models import AssetClass
 from app.image.optimization_models import (
     CandidateResult, OptimizationConfig, OptimizationDecision, OptimizationResult,
 )
+from app.image.quality import QualityPipeline
 
 
 class OfflineOptimizer:
     """Processes a single local file at a time and never touches the remote server."""
 
     def __init__(self, project_data: Path, repository: OptimizationRepository | None = None,
-                 config: OptimizationConfig | None = None, resources: ResourceManager | None = None) -> None:
+                 config: OptimizationConfig | None = None, resources: ResourceManager | None = None,
+                 quality: QualityPipeline | None = None,
+                 manifests: DecisionManifestRepository | None = None) -> None:
         self.project_data = project_data
         self.repository = repository
         self.config = config or OptimizationConfig()
         self.resources = resources or ResourceManager(ResourceLimits(self.config.max_workers, self.config.max_pixels))
+        self.quality = quality or QualityPipeline()
+        profile = DecisionProfile(self.config.decision_profile)
+        defaults = PROFILES[profile]
+        self.thresholds = ProfileThresholds(
+            defaults.minimum_ssim,
+            self.config.minimum_psnr if self.config.minimum_psnr is not None else defaults.minimum_psnr,
+            defaults.maximum_perceptual_difference,
+            self.config.minimum_savings_ratio if self.config.minimum_savings_ratio is not None else defaults.minimum_savings_ratio,
+            self.config.minimum_savings_bytes if self.config.minimum_savings_bytes is not None else defaults.minimum_savings_bytes,
+        )
+        self.decision_engine = FormatDecisionEngine(profile, self.thresholds)
+        self.manifests = manifests or (DecisionManifestRepository(repository.jobs) if repository else None)
 
     def optimize(self, job_id: str, source: Path, original_path: str) -> OptimizationResult:
         started = time.monotonic()
@@ -85,7 +106,8 @@ class OfflineOptimizer:
                         ))
                     validated.append(self._validate(candidate, normalized, alpha_before, bool(source_icc)))
                 return self._store(self._select(
-                    job_id, original_path, original_bytes, normalized.size, alpha_before, validated,
+                    job_id, original_path, original_bytes, normalized.size, alpha_before,
+                    self._classify(original_path, normalized, alpha_before), validated,
                 ))
         except ResourceLimitExceeded as exc:
             return self._store(self._retained(job_id, original_path, original_bytes, str(exc)))
@@ -154,47 +176,74 @@ class OfflineOptimizer:
                   alpha_before: tuple[bool, float | None, bool], require_icc: bool) -> CandidateResult:
         path, format_name, parameters = candidate
         image_module = importlib.import_module("PIL.Image")
+        validation_started = time.monotonic()
         reason, passed, psnr = "Validated", True, None
         width = height = 0
         alpha = (False, None, False)
+        orientation_correct = color_valid = False
+        file_exists, signature_valid, decodable = path.is_file(), False, False
         try:
-            signature = detect_format(path.read_bytes()[:64])
+            with path.open("rb") as stream:
+                signature = detect_format(stream.read(64))
             if signature != format_name:
                 raise ValueError("Encoded signature does not match candidate format")
+            signature_valid = True
             with image_module.open(path) as image:
                 image.verify()
             with image_module.open(path) as image:
                 image.load()
+                decodable = True
                 width, height = image.size
                 alpha = self._alpha_metrics(image)
+                orientation_correct = image.getexif().get(274, 1) in {None, 1}
+                color_valid = image.mode not in {"CMYK", "LAB", "HSV", "I", "F"} and not image.mode.startswith("I;16")
                 if image.size != source_image.size:
                     raise ValueError("Dimensions changed")
+                if not orientation_correct:
+                    raise ValueError("Orientation metadata was not normalized")
+                if not color_valid:
+                    raise ValueError("Candidate color mode is unsafe")
                 if alpha != alpha_before:
                     raise ValueError("Transparency or semitransparency changed")
                 if require_icc and not image.info.get("icc_profile"):
                     raise ValueError("ICC profile was not preserved")
-                psnr = self._psnr(source_image, image)
-                if not parameters.get("lossless") and format_name not in {"PNG"} and psnr < self.config.minimum_psnr:
-                    raise ValueError(f"Visual fidelity below threshold ({psnr:.2f} dB)")
+                metrics = self.quality.evaluate(source_image, image)
+                metric_values = {name: metric.value for name, metric in metrics.items()}
+                psnr = metric_values.get("psnr")
         except Exception as exc:
             passed, reason = False, str(exc)
+            metric_values = {}
         return CandidateResult(
-            str(path), format_name, path.stat().st_size if path.exists() else 0, parameters,
-            width, height, *alpha, self._checksum(path) if path.exists() else "", passed, reason, psnr,
+            path=str(path), format=format_name, bytes=path.stat().st_size if path.exists() else 0,
+            parameters=parameters, width=width, height=height, has_alpha=alpha[0],
+            transparency_ratio=alpha[1], has_semitransparency=alpha[2],
+            checksum=self._checksum(path) if path.exists() else "", validation_passed=passed,
+            validation_reason=reason, psnr=psnr, metrics=metric_values,
+            orientation_correct=orientation_correct, color_valid=color_valid,
+            corruption_free=decodable, processing_seconds=time.monotonic() - validation_started,
+            file_exists=file_exists, signature_valid=signature_valid, decodable=decodable,
         )
 
     def _select(self, job_id: str, original_path: str, original_bytes: int,
-                dimensions: tuple[int, int], alpha: tuple[bool, float | None, bool],
+                dimensions: tuple[int, int], alpha: tuple[bool, float | None, bool], asset_class: AssetClass,
                 candidates: list[CandidateResult]) -> OptimizationResult:
-        minimum = max(self.config.minimum_savings_bytes, math.ceil(original_bytes * self.config.minimum_savings_ratio))
-        eligible = [candidate for candidate in candidates if candidate.validation_passed and original_bytes - candidate.bytes >= minimum]
-        if not eligible:
+        original = OriginalFacts(
+            original_bytes, dimensions[0], dimensions[1], *alpha,
+            asset_class=asset_class, text_heavy=asset_class is AssetClass.SCREENSHOT,
+        )
+        assessments = [self._assessment(candidate) for candidate in candidates]
+        decision = self.decision_engine.decide(original, assessments)
+        if self.manifests:
+            self.manifests.save(job_id, original_path, original, decision, self.thresholds)
+        if decision.selected is None:
             self._remove_candidates(candidates)
-            return self._retained(
+            return OptimizationResult(
                 job_id, original_path, original_bytes,
-                "No validated candidate achieved meaningful savings", width=dimensions[0], height=dimensions[1],
+                OptimizationDecision.SKIPPED if decision.choice is OutputChoice.SKIP else OptimizationDecision.RETAINED_ORIGINAL,
+                decision.reason, width=dimensions[0], height=dimensions[1], has_alpha=alpha[0],
+                transparency_ratio=alpha[1], has_semitransparency=alpha[2], confidence=decision.confidence.value,
             )
-        selected = min(eligible, key=lambda candidate: candidate.bytes)
+        selected = next(candidate for candidate in candidates if candidate.path == decision.selected.path)
         processed = self.project_data / "jobs" / job_id / "processed"
         processed.mkdir(parents=True, exist_ok=True)
         stem = PurePosixPath(original_path).stem
@@ -206,11 +255,11 @@ class OfflineOptimizer:
         savings = original_bytes - selected.bytes
         return OptimizationResult(
             job_id, original_path, original_bytes, OptimizationDecision.SELECTED,
-            f"Selected smallest validated candidate with {savings:,} byte savings",
+            decision.reason,
             selected.path, selected.format, selected.bytes, selected.parameters,
             selected.width, selected.height, selected.has_alpha, selected.transparency_ratio,
             selected.has_semitransparency, selected.checksum, True, selected.validation_reason,
-            savings, savings / original_bytes,
+            decision.confidence.value, savings, savings / original_bytes,
         )
 
     def _optimize_svg(self, job_id: str, source: Path, original_path: str, original_bytes: int) -> OptimizationResult:
@@ -238,7 +287,7 @@ class OfflineOptimizer:
         except ET.ParseError:
             return self._retained(job_id, original_path, original_bytes, "SVG candidate validation failed", failed=True)
         savings = original_bytes - len(candidate_data)
-        minimum = max(self.config.minimum_savings_bytes, math.ceil(original_bytes * self.config.minimum_savings_ratio))
+        minimum = max(self.thresholds.minimum_savings_bytes, math.ceil(original_bytes * self.thresholds.minimum_savings_ratio))
         if savings < minimum:
             return self._retained(job_id, original_path, original_bytes, "Safe SVG cleanup did not provide meaningful savings")
         processed = self.project_data / "jobs" / job_id / "processed"
@@ -257,7 +306,35 @@ class OfflineOptimizer:
             {"removed": ["metadata", "desc"]}, width=width, height=height,
             checksum=self._checksum(destination),
             validation_passed=True, savings_bytes=savings, savings_ratio=savings / original_bytes,
+            confidence="HIGH",
         )
+
+    def _assessment(self, candidate: CandidateResult) -> CandidateAssessment:
+        return CandidateAssessment(
+            candidate.format, candidate.path, candidate.bytes,
+            file_exists=candidate.file_exists, compatible=candidate.format in self.config.compatible_formats,
+            signature_valid=candidate.signature_valid,
+            decodable=candidate.decodable, width=candidate.width, height=candidate.height,
+            orientation_correct=candidate.orientation_correct, has_alpha=candidate.has_alpha,
+            transparency_ratio=candidate.transparency_ratio,
+            has_semitransparency=candidate.has_semitransparency, color_valid=candidate.color_valid,
+            corruption_free=candidate.corruption_free, metrics=candidate.metrics,
+            processing_seconds=candidate.processing_seconds, parameters=candidate.parameters,
+            checksum=candidate.checksum,
+        )
+
+    @staticmethod
+    def _classify(original_path: str, image, alpha: tuple[bool, float | None, bool]) -> AssetClass:
+        name = PurePosixPath(original_path).name.casefold()
+        if "logo" in name:
+            return AssetClass.LOGO
+        if "icon" in name or max(image.size) <= 128:
+            return AssetClass.ICON
+        if "screenshot" in name:
+            return AssetClass.SCREENSHOT
+        if alpha[0]:
+            return AssetClass.TRANSPARENT_GRAPHIC
+        return AssetClass.PHOTO
 
     @staticmethod
     def _alpha_metrics(image) -> tuple[bool, float | None, bool]:
@@ -266,14 +343,6 @@ class OfflineOptimizer:
         alpha = image.convert("RGBA").getchannel("A").histogram()
         total = max(1, sum(alpha))
         return True, sum(alpha[:255]) / total, sum(alpha[1:255]) > 0
-
-    @staticmethod
-    def _psnr(first, second) -> float:
-        left, right = first.convert("RGB"), second.convert("RGB")
-        histogram = importlib.import_module("PIL.ImageChops").difference(left, right).histogram()
-        squared = sum((index % 256) ** 2 * count for index, count in enumerate(histogram))
-        mse = squared / max(1, left.width * left.height * 3)
-        return math.inf if mse == 0 else 20 * math.log10(255 / math.sqrt(mse))
 
     @staticmethod
     def _checksum(path: Path) -> str:
@@ -303,6 +372,10 @@ class OfflineOptimizer:
     def _store(self, result: OptimizationResult) -> OptimizationResult:
         if self.repository:
             self.repository.save(result)
+        if self.manifests and self.manifests.get(result.job_id, result.original_path) is None:
+            self.manifests.save_terminal_result(
+                result, self.decision_engine.profile.value, self.thresholds
+            )
         return result
 
     @staticmethod

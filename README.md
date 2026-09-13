@@ -1,6 +1,6 @@
 # ImageForge
 
-ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–5 provide the application shell, durable jobs, secure remote discovery, persistent image intelligence, and an offline candidate optimization engine. It does not yet modify WordPress or remote databases or replace/delete production files.
+ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–6 provide the application shell, durable jobs, secure remote discovery, persistent image intelligence, offline candidate generation, and an auditable quality/safety decision engine. It does not yet modify WordPress or remote databases or replace/delete production files.
 
 ## Architecture
 
@@ -60,6 +60,14 @@ Candidates are generated under `ProjectData/jobs/<job-id>/processed/.candidates`
 
 Processing is incremental through `optimize_many`, and `ResourceManager` limits concurrent decoders and per-image pixels. Configurable file-byte, pixel, worker, savings, fidelity, and elapsed-time limits protect local resources. Each result is persisted independently so thousands of files do not need to remain in memory.
 
+## Format selection and quality gate
+
+Format selection is separate from encoding and is never based on size alone. Every WebP or AVIF candidate is assessed for existence, signature, decoding, corruption, dimensions, normalized orientation, compatible color, alpha presence, transparent and semitransparent regions, meaningful savings, quality, compatibility, and processing cost. A smaller AVIF can lose to a slightly larger, visibly safer WebP; neither format receives an automatic preference. If all compatible candidates fail—or confidence is low—the original is retained. Decisions always include a user-readable explanation.
+
+Quality evaluation uses a pluggable `QualityEvaluator` protocol and a default pipeline containing global luminance SSIM, RGB PSNR, and normalized perceptual difference. New metrics can be added without changing the decision engine. The `SAFE` default profile uses the strictest quality and savings thresholds; `BALANCED` and `AGGRESSIVE` remain bounded alternatives. Logos, icons, screenshots, illustrations, text-heavy images, and transparent graphics receive stricter thresholds than photos.
+
+SQLite schema version 4 stores a canonical decision manifest for every persisted result. Each manifest contains the decision-engine version, profile, exact thresholds, original facts, all candidate assessments and metrics, per-candidate verdicts and rejection reasons, selected format, confidence (`HIGH`, `MEDIUM`, or `LOW`), and final explanation. JSON fields use stable key ordering and compact separators so inputs are reproducible and audits can explain precisely why `ORIGINAL`, `WEBP`, `AVIF`, or `SKIP` was chosen.
+
 ## Installation and running
 
 Python 3.11 or newer is recommended.
@@ -106,4 +114,4 @@ Keep UI work on the Qt main thread and all expensive or blocking work in workers
 
 ## Roadmap
 
-Future phases will add upload planning, WordPress reference updates, production verification, rollback, and only then guarded original cleanup. Phase 5 produces local candidates only; remote database changes, production uploads, raster-to-vector conversion, original replacement, and deletion remain out of scope.
+Future phases will add upload planning, WordPress reference updates, production verification, rollback, and only then guarded original cleanup. Phase 6 produces and selects local candidates only; remote database changes, production uploads, raster-to-vector conversion, original replacement, and deletion remain out of scope.

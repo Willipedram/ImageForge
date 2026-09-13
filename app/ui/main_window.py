@@ -157,7 +157,7 @@ class SettingsPage(QWidget):
         self.theme.addItems(["system", "light", "dark"])
         self.theme.setCurrentText(settings.theme)
         self.profile = QComboBox()
-        self.profile.addItems(["balanced", "quality", "maximum_savings"])
+        self.profile.addItems(["safe", "balanced", "aggressive"])
         self.profile.setCurrentText(settings.default_optimization_profile)
         self.workers = QSpinBox()
         self.workers.setRange(1, 64)

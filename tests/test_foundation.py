@@ -44,6 +44,13 @@ def test_configuration_rejects_invalid_values(tmp_path):
         store.save(settings)
 
 
+def test_configuration_migrates_legacy_optimization_profiles(tmp_path):
+    store = ConfigurationStore(tmp_path)
+    store.path.parent.mkdir(parents=True)
+    store.path.write_text('{"project_data_path":"x","default_optimization_profile":"quality"}')
+    assert store.load().default_optimization_profile == "safe"
+
+
 def test_job_model_round_trip_and_sqlite_repository(tmp_path):
     job = Job(target="example.com", status=JobStatus.SCANNING, progress=42.5, current_stage="Scanning")
     restored = Job.from_dict(job.to_dict())
