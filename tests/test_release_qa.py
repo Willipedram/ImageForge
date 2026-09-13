@@ -186,6 +186,16 @@ def test_ftp_and_ftps_connect_without_leaking_password(monkeypatch):
         assert "secret" not in repr(server._credentials); server.disconnect()
 
 
+def test_ftp_missing_stat_uses_filesystem_error_instead_of_stop_iteration(monkeypatch):
+    server = FTPServer(
+        ConnectionConfig(Protocol.FTP, "example.test", 21), RuntimeCredentials("u", "secret")
+    )
+    monkeypatch.setattr(server, "list", lambda path: [])
+    with pytest.raises(FileNotFoundError, match="public_html"):
+        server.stat("/public_html")
+    assert server.exists("/public_html") is False
+
+
 def test_sftp_connects_with_host_key_verification(monkeypatch):
     class SSH:
         def load_system_host_keys(self): self.loaded = True
