@@ -187,6 +187,20 @@ def test_discovery_skips_hosting_service_directories_but_reports_empty_public_ht
     assert any(trace.path == "/logs" and trace.status == "skipped_non_web_directory" for trace in traces)
 
 
+def test_preflight_logs_professional_discovery_summary(tmp_path, caplog):
+    tree = {"/": [directory("/logs", "logs"), directory("/public_html", "public_html")],
+            "/logs": [], "/public_html": []}
+    server = FakeServer(tree); server.connect()
+    with caplog.at_level("INFO"):
+        PreflightService(server, tmp_path, minimum_free_bytes=1).run("/")
+    summary = next(line for line in caplog.text.splitlines()
+                   if "checkpoint=website_discovery_summary" in line)
+    assert '"inspected_paths": "/ -> /public_html"' in summary
+    assert '"skipped_paths": "/logs (non_web_directory)"' in summary
+    assert '"empty_paths": "/public_html"' in summary
+    assert "FTP-visible public_html is empty" in summary
+
+
 def test_metadata_scan_handles_unicode_spaces_and_case_without_downloads(wordpress_server):
     images = list(RemoteImageScanner(wordpress_server).scan("/clients/Acme Site/wp-content/uploads"))
     assert [image.path for image in images] == [

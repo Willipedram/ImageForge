@@ -84,11 +84,18 @@ class PreflightService:
             log_keypoint(logger, checkpoint, "passed", context={"run": run_id, "path": accessible_root})
             checkpoint = "website_discovery"
             log_keypoint(logger, checkpoint, "started", context={"run": run_id, "path": accessible_root})
+            discovery_traces: list[DiscoveryTrace] = []
             def trace_directory(trace: DiscoveryTrace) -> None:
+                discovery_traces.append(trace)
                 children = trace.child_directories[:30]
+                trace_status = (
+                    "warning" if trace.status == "denied"
+                    else "skipped" if trace.status.startswith("skipped_")
+                    else "inspected"
+                )
                 log_keypoint(
                     logger, "website_discovery_directory",
-                    "warning" if trace.status == "denied" else "inspected",
+                    trace_status,
                     context={
                         "run": run_id, "path": trace.path, "depth": trace.depth,
                         "result": trace.status, "entries": trace.entry_count,
@@ -104,7 +111,7 @@ class PreflightService:
             discovery = discoverer.discover(accessible_root)
             if not discovery.wordpress:
                 for candidate in dict.fromkeys((remote_root, *discovery_roots)):
-                    if candidate == accessible_root:
+                    if candidate == accessible_root or any(trace.path == candidate for trace in discovery_traces):
                         continue
                     try:
                         self.server.stat(candidate)
@@ -117,6 +124,21 @@ class PreflightService:
                     if alternative.wordpress:
                         discovery = alternative
                         break
+            inspected_paths = list(dict.fromkeys(
+                trace.path for trace in discovery_traces
+                if trace.status in {"inspected", "wordpress_found"}
+            ))
+            skipped_paths = list(dict.fromkeys(
+                f"{trace.path} ({trace.status.removeprefix('skipped_')})"
+                for trace in discovery_traces if trace.status.startswith("skipped_")
+            ))
+            denied_paths = list(dict.fromkeys(
+                trace.path for trace in discovery_traces if trace.status == "denied"
+            ))
+            all_empty_paths = list(dict.fromkeys(
+                trace.path for trace in discovery_traces
+                if trace.status == "inspected" and trace.entry_count == 0
+            ))
             if discovery.wordpress:
                 discovery_detail = discovery.site_root or "WordPress detected"
             else:
@@ -127,6 +149,24 @@ class PreflightService:
                     f"empty directories: {', '.join(discovery.empty_directories) or 'none'}"
                 )
             checks.append(CheckResult("Website discovery", discovery.wordpress, discovery_detail))
+            conclusion = (
+                "WordPress root found"
+                if discovery.wordpress
+                else "FTP-visible public_html is empty; site files are outside this account root"
+                if "/public_html" in all_empty_paths
+                else "No inspected directory contains all required WordPress markers"
+            )
+            log_keypoint(logger, "website_discovery_summary",
+                         "passed" if discovery.wordpress else "stopped", context={
+                "run": run_id,
+                "inspected_paths": " -> ".join(inspected_paths) or "none",
+                "skipped_paths": ", ".join(skipped_paths) or "none",
+                "denied_paths": ", ".join(denied_paths) or "none",
+                "empty_paths": ", ".join(all_empty_paths) or "none",
+                "conclusion": conclusion,
+                "recommended_action": "locate wp-config.php in DirectAdmin File Manager and update FTP root"
+                    if not discovery.wordpress else "continue",
+            })
             log_keypoint(logger, checkpoint, "passed" if discovery.wordpress else "stopped", context={
                 "run": run_id,
                 "search_root": discovery.search_root,
