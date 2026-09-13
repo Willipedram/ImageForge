@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -71,6 +72,9 @@ def test_server_page_explains_directadmin_is_not_sftp(tmp_path, qapp):
     assert "SSH access" in " ".join(page._connection_help())
     assert "Domain directory" in " ".join(page._discovery_help())
     assert "subdirectory account" in " ".join(page._discovery_help())
+    assert "visible but empty" in " ".join(page._discovery_help(
+        SimpleNamespace(empty_directories=("/public_html",))
+    ))
 
 
 def test_theme_system_produces_distinct_professional_palettes():

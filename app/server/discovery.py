@@ -27,6 +27,9 @@ class DiscoveryOptions:
     themes_names: tuple[str, ...] = ("themes",)
     plugins_names: tuple[str, ...] = ("plugins",)
     max_trace_directories: int = 250
+    ignored_directory_names: tuple[str, ...] = (
+        ".htpasswd", "logs", "stats", "public_ftp", "backups", "mail", "tmp",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +60,7 @@ class SiteDiscovery:
     closest_path: str | None = None
     missing_markers: tuple[str, ...] = ()
     directories_checked: int = 0
+    empty_directories: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +88,7 @@ class SiteDiscoverer:
         visited: set[str] = set()
         best_path, best_score = root, -1
         best_missing: tuple[str, ...] = ()
+        empty_directories: list[str] = []
         while queue and len(visited) < self.options.max_directories:
             directory, depth = queue.popleft()
             key = directory
@@ -96,6 +101,8 @@ class SiteDiscoverer:
                 self._emit_trace(DiscoveryTrace(directory, depth, "denied", error_type=type(exc).__name__))
                 continue
             names = {entry.name.casefold(): entry for entry in entries}
+            if not entries and len(empty_directories) < 50:
+                empty_directories.append(directory)
             content_entry = next(
                 (names[name.casefold()] for name in self.options.content_names if name.casefold() in names), None
             )
@@ -109,9 +116,11 @@ class SiteDiscoverer:
                 ) if not present
             )
             score = 4 - len(missing)
+            ignored = {name.casefold() for name in self.options.ignored_directory_names}
             children = tuple(sorted(
                 entry.name for entry in entries
-                if entry.is_directory and (self.options.follow_symlinks or not entry.is_symlink)
+                if entry.is_directory and entry.name.casefold() not in ignored
+                and (self.options.follow_symlinks or not entry.is_symlink)
             ))
             found = tuple(label for present, label in (
                 ("wp-admin" in names, "wp-admin"),
@@ -140,17 +149,25 @@ class SiteDiscoverer:
                     uploads, themes, plugins,
                     bool(plugins and self.server.exists(safe_join(plugins, "woocommerce"))),
                     bool(plugins and self.server.exists(safe_join(plugins, "elementor"))),
-                    directory, (), len(visited),
+                    directory, (), len(visited), tuple(empty_directories),
                 )
             if depth < self.options.max_depth:
+                for entry in entries:
+                    if entry.is_directory and entry.name.casefold() in ignored:
+                        self._emit_trace(DiscoveryTrace(
+                            entry.path, depth + 1, "skipped_non_web_directory"
+                        ))
                 children = sorted(
-                    (entry for entry in entries if entry.is_directory and (self.options.follow_symlinks or not entry.is_symlink)),
+                    (entry for entry in entries if entry.is_directory
+                     and entry.name.casefold() not in ignored
+                     and (self.options.follow_symlinks or not entry.is_symlink)),
                     key=lambda entry: self._priority(entry.name),
                 )
                 queue.extend((entry.path, depth + 1) for entry in children)
         return SiteDiscovery(
             root, None, False, missing_markers=best_missing,
             closest_path=best_path, directories_checked=len(visited),
+            empty_directories=tuple(empty_directories),
         )
 
     def _emit_trace(self, trace: DiscoveryTrace) -> None:

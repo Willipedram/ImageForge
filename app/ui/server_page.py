@@ -44,6 +44,7 @@ class DiscoveryWorker(QObject):
                 "/",
                 f"/domains/{host}/public_html",
                 "/public_html",
+                "/private_html",
                 "/www",
                 "/htdocs",
             )
@@ -191,7 +192,7 @@ class ServerConnectionPage(QWidget):
                 f"Elementor: {'Yes' if site.elementor else 'No'}",
             ])
         elif report.discovery:
-            lines.extend(["", *self._discovery_help()])
+            lines.extend(["", *self._discovery_help(report.discovery)])
         self.results.setPlainText("\n".join(lines))
 
     def _connection_help(self) -> list[str]:
@@ -210,13 +211,19 @@ class ServerConnectionPage(QWidget):
             "The DirectAdmin web-panel URL/password is not automatically an FTP login.",
         ]
 
-    def _discovery_help(self) -> list[str]:
-        return [
+    def _discovery_help(self, discovery=None) -> list[str]:
+        lines = [
             "The FTP login works, but its accessible directory does not contain the WordPress root markers.",
             "In DirectAdmin > FTP Management, set this account to Domain directory access and use /public_html here,",
             "or set its custom path to the domain's public_html directory. A public_html subdirectory account cannot scan the whole site.",
             "Use the closest path and missing markers shown above to confirm exactly what this FTP account can see.",
         ]
+        if discovery and "/public_html" in discovery.empty_directories:
+            lines.extend([
+                "Important: /public_html is visible but empty for this FTP account.",
+                "Open DirectAdmin File Manager, locate wp-config.php, then grant this FTP account access to that exact parent directory.",
+            ])
+        return lines
 
     def _credential_id(self) -> str:
         endpoint = f"{self.protocol.currentText()}|{self.host.text().strip().casefold()}|{self.port.value()}"

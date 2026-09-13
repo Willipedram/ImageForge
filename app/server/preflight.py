@@ -123,7 +123,8 @@ class PreflightService:
                 missing = ", ".join(discovery.missing_markers) or "WordPress markers"
                 discovery_detail = (
                     f"WordPress not detected after checking {discovery.directories_checked} directories; "
-                    f"closest path: {discovery.closest_path or discovery.search_root}; missing: {missing}"
+                    f"closest path: {discovery.closest_path or discovery.search_root}; missing: {missing}; "
+                    f"empty directories: {', '.join(discovery.empty_directories) or 'none'}"
                 )
             checks.append(CheckResult("Website discovery", discovery.wordpress, discovery_detail))
             log_keypoint(logger, checkpoint, "passed" if discovery.wordpress else "stopped", context={
@@ -133,6 +134,7 @@ class PreflightService:
                 "closest_path": discovery.closest_path,
                 "missing_markers": ", ".join(discovery.missing_markers),
                 "directories_checked": discovery.directories_checked,
+                "empty_directories": ", ".join(discovery.empty_directories),
                 "next": "check DirectAdmin FTP account root" if not discovery.wordpress else None,
             })
         except Exception as exc:

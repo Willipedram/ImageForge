@@ -160,6 +160,7 @@ def test_failed_discovery_reports_closest_path_and_missing_markers():
     assert result.closest_path == "/public_html"
     assert result.missing_markers == ("wp-admin", "wp-includes")
     assert result.directories_checked == 3
+    assert result.empty_directories == ("/public_html/wp-content",)
 
 
 def test_discovery_trace_explains_each_directory_without_regular_filenames():
@@ -173,6 +174,17 @@ def test_discovery_trace_explains_each_directory_without_regular_filenames():
     assert traces[0].child_directories == ("public_html",)
     assert "secret.txt" not in repr(traces)
     assert traces[1].found_markers == ("wp-content",)
+
+
+def test_discovery_skips_hosting_service_directories_but_reports_empty_public_html():
+    traces = []
+    tree = {"/": [directory("/logs", "logs"), directory("/public_html", "public_html")],
+            "/logs": [directory("/logs/archive", "archive")], "/public_html": []}
+    server = FakeServer(tree); server.connect()
+    result = SiteDiscoverer(server, trace=traces.append).discover("/")
+    assert result.directories_checked == 2
+    assert result.empty_directories == ("/public_html",)
+    assert any(trace.path == "/logs" and trace.status == "skipped_non_web_directory" for trace in traces)
 
 
 def test_metadata_scan_handles_unicode_spaces_and_case_without_downloads(wordpress_server):
