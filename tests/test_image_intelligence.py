@@ -132,7 +132,7 @@ def test_database_migrates_version_one_to_inventory_schema(tmp_path):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert "image_inventory" in tables
-    assert version == DATABASE_SCHEMA_VERSION == 7
+    assert version == DATABASE_SCHEMA_VERSION == 8
 
 
 def test_inventory_builder_streams_files_and_maps_derivatives(inventory):

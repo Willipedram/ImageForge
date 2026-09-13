@@ -179,4 +179,4 @@ def test_schema_migrates_six_to_reference_tables(tmp_path):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert {"database_reference_changes", "reference_edges"} <= tables
-    assert version == DATABASE_SCHEMA_VERSION == 7
+    assert version == DATABASE_SCHEMA_VERSION == 8

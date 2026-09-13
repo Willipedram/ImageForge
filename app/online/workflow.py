@@ -50,11 +50,12 @@ class OnlineWorkflow:
     def __init__(self, project_data: Path, engine: JobEngine, server: RemoteServer,
                  optimizer: OfflineOptimizer, updater: ReferenceUpdater,
                  repository: OnlineRepository | None = None,
-                 sleeper: Callable[[float], None] = time.sleep) -> None:
+                 sleeper: Callable[[float], None] = time.sleep, finalizer=None) -> None:
         self.project_data = project_data.resolve()
         self.engine, self.server, self.optimizer, self.updater = engine, server, optimizer, updater
         self.repository = repository or OnlineRepository(engine.repository)
         self.sleeper = sleeper
+        self.finalizer = finalizer
 
     def create(self, target: str, remote_root: str = "/") -> str:
         root = normalize_remote_path(remote_root)
@@ -78,6 +79,7 @@ class OnlineWorkflow:
             self._upload_verify_promote(job_id, progress)
             self._database_update(job_id, progress)
             self._final_verify(job_id, progress)
+            self._cleanup(job_id)
             return self.repository.report(job_id)
         finally:
             self.server.disconnect()
@@ -277,7 +279,7 @@ class OnlineWorkflow:
             changes = (ReferenceChange(item.remote_path, item.production_path),)
             if not self.updater.verify(changes): raise IOError("Final database verification failed.")
             if not self._remote_matches(item, item.production_path): raise IOError("Final remote verification failed.")
-            # The original must still exist in Phase 8; deletion belongs to Phase 10.
+            # The final safety coordinator—not this deployment stage—owns any deletion.
             if not self._remote(item, lambda: self.server.exists(item.remote_path)): raise IOError("Original unexpectedly missing.")
             item.status, item.verification_status = OnlineItemStatus.FINAL_VERIFIED, "FINAL_VERIFIED"
             self.repository.save_item(item); self._checkpoint(job_id, "online_final_verified", item)
@@ -288,7 +290,16 @@ class OnlineWorkflow:
             original_bytes=report.original_bytes, optimized_bytes=report.candidate_bytes,
             progress=100 if report.total else 100)
         self.engine.transition(job_id, JobStatus.CLEANUP)
-        self._checkpoint(job_id, "cleanup_deferred", payload={"originals_deleted": 0})
+
+    def _cleanup(self, job_id: str) -> None:
+        """Resume final cleanup independently after a crash at its safe boundary."""
+        if self.engine.repository.get(job_id).status is not JobStatus.CLEANUP:
+            return
+        if self.finalizer:
+            report = self.finalizer.finalize(job_id)
+            self._checkpoint(job_id, "cleanup_complete", payload={"originals_deleted": report.originals_deleted})
+        else:
+            self._checkpoint(job_id, "cleanup_deferred", payload={"originals_deleted": 0})
         self.engine.transition(job_id, JobStatus.COMPLETED)
 
     def _remote_matches(self, item: OnlineItem, path: str | None) -> bool:

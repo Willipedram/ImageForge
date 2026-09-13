@@ -11,7 +11,7 @@ from typing import Any
 
 from app.core.jobs import ItemStatus, Job, JobItem, JobStatus, UNFINISHED_JOB_STATES, utc_now
 
-DATABASE_SCHEMA_VERSION = 7
+DATABASE_SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -146,6 +146,24 @@ CREATE TABLE IF NOT EXISTS reference_edges (
     column_name TEXT NOT NULL, relation_type TEXT NOT NULL,
     UNIQUE(job_id,image_path,table_name,record_id,column_name)
 );
+CREATE TABLE IF NOT EXISTS backup_bundles (
+    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+    bundle_path TEXT NOT NULL, manifest_checksum TEXT NOT NULL,
+    verified INTEGER NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS safety_audits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    item_id TEXT NOT NULL, original_path TEXT NOT NULL, candidate_path TEXT,
+    checks TEXT NOT NULL, deletion_authorized INTEGER NOT NULL,
+    original_deleted INTEGER NOT NULL, warnings TEXT NOT NULL, errors TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    UNIQUE(job_id,item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_safety_audits_job ON safety_audits(job_id,item_id);
+CREATE TABLE IF NOT EXISTS rollback_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    status TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL
+);
 """
 
 INVENTORY_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS image_inventory"):]
@@ -154,6 +172,7 @@ DECISION_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS decision_manif
 OFFLINE_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS offline_runs"):]
 ONLINE_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS online_runs"):]
 WORDPRESS_DATABASE_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS database_reference_changes"):]
+SAFETY_SCHEMA = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS backup_bundles"):]
 
 
 class TargetLockedError(RuntimeError):
@@ -215,6 +234,10 @@ class JobRepository:
             if version == 6:
                 connection.executescript(WORDPRESS_DATABASE_SCHEMA)
                 connection.execute("PRAGMA user_version = 7")
+                version = 7
+            if version == 7:
+                connection.executescript(SAFETY_SCHEMA)
+                connection.execute("PRAGMA user_version = 8")
 
     def save(self, job: Job, connection: sqlite3.Connection | None = None) -> None:
         job.validate()

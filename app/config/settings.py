@@ -41,6 +41,7 @@ class AppSettings:
     optimization_timeout_seconds: float = 120.0
     minimum_savings_percent: float = 5.0
     backup_retention_days: int = 30
+    backup_retention_policy: str = "30_days"
     logging_level: str = "INFO"
 
     @classmethod
@@ -61,6 +62,8 @@ class AppSettings:
             raise ValueError("minimum_savings_percent must be between 0 and 100")
         if self.backup_retention_days < 1:
             raise ValueError("backup_retention_days must be positive")
+        if self.backup_retention_policy not in {"7_days", "30_days", "90_days", "never"}:
+            raise ValueError("backup_retention_policy is invalid")
         if self.logging_level.upper() not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
             raise ValueError("logging_level is invalid")
         if self.theme not in {"system", "light", "dark"}:

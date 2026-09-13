@@ -1,6 +1,6 @@
 # ImageForge
 
-ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–9 provide durable jobs, remote discovery, image intelligence, auditable decisions, local-folder optimization, and a checkpointed production deployment pipeline.
+ImageForge is a native Windows desktop system for safely optimizing website images. Phases 1–10 provide durable jobs, remote discovery, image intelligence, auditable decisions, local-folder optimization, and a checkpointed production deployment pipeline.
 
 ## Architecture
 
@@ -14,6 +14,7 @@ app/
 ├── server/              # FTP/FTPS/SFTP, preflight, discovery, scanning
 ├── online/              # staged upload, reference update, verification pipeline
 ├── offline/             # local dry-run, apply, and recovery workflow
+├── safety/              # final audit, HTTP checks, rollback, retention
 ├── storage/             # ProjectData lifecycle and schema control
 ├── ui/                  # PySide6 window, pages, dashboard, styling
 ├── utils/               # human/structured logging
@@ -98,6 +99,16 @@ Reference discovery recognizes HTTP/HTTPS URLs, root-relative and uploads-relati
 
 The dry run is persisted in SQLite schema version 7 with table, primary key, record ID, column, old value, proposed value, change type, status, and review reason. Reference-graph edges connect each image to attachment metadata, content, products, widgets, and plugin rows. The **Database Review** page displays every proposal before mutation. Explicit approval is impossible while any record requires review. Approved writes use optimistic `WHERE primary_key AND old_value` guards in controlled batches, followed by structural validation, confirmation of new values, and a database-wide search for stale old references. Blind SQL `REPLACE` is never used.
 
+## Final safety, cleanup, and rollback
+
+Phase 10 adds a `FinalSafetyCoordinator` after database and remote verification. It first builds an atomic, job-associated backup bundle in `ProjectData/backups/jobs/<job-id>/`. The bundle contains the online image manifest, relevant WordPress reference metadata, the job record, a consistent SQLite job-state snapshot made with SQLite's backup API, and the path and SHA-256 of the already verified complete database backup. Bundle files are checksummed and reread before cleanup can proceed; original image backups remain under the matching `ProjectData/backups/online/<job-id>/` tree.
+
+For every candidate, cleanup requires all gates to pass: remote existence, decoding/signature, MIME, exact dimensions, SHA-256, prior remote verification, database and WordPress metadata verification, absence of old references, verified original backup, verified bundle, committed job checkpoint, and public HTTP verification. The HTTP verifier checks status, MIME, decodability, dimensions, and reports Cloudflare, LiteSpeed, WordPress, proxy, or CDN cache indicators without purging caches. Audit evidence and cleanup authorization are committed before deletion. Any false or unknown gate retains the original. A cleanup transport failure is recorded as a warning because the verified candidate and references remain correct; it does not falsely mark the optimized image as broken.
+
+Cleanup is idempotent after crashes: a restart reconciles committed authorization with actual remote existence and does not repeat completed work. `rollback(job_id)` verifies the bundle, atomically restores any missing originals from their checksummed backups, restores the complete database (including attachment metadata), confirms original references, and only then removes optimized sidecars. Final reports include optimized/skipped/failed counts, deleted and retained originals, updated database records, verification errors, warnings, realized savings, and duration.
+
+Backup retention is explicit and supports 7 days, 30 days, 90 days, or never. `never` performs no deletion. The retention service only removes expired backups for terminal jobs when directly invoked with a finite policy; it refuses symlinks and paths outside ProjectData. Source replacement never deletes ProjectData automatically.
+
 ## Installation and running
 
 Python 3.11 or newer is recommended.
@@ -144,4 +155,4 @@ Keep UI work on the Qt main thread and all expensive or blocking work in workers
 
 ## Roadmap
 
-Future phases will build on the verified database backup and reference graph to add production rollback orchestration and guarded remote-original cleanup only after reference and serving verification. Phase 8 deliberately retains every remote original and every verified local backup; raster-to-vector conversion remains out of scope.
+Phase 10 completes guarded cleanup and job-ID rollback. Future work may add provider-specific cache purge integrations, but cache invalidation will remain explicit and independently verified. Raster-to-vector conversion remains out of scope.

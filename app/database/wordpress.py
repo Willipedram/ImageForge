@@ -275,6 +275,16 @@ class WordPressReferenceUpdater(ReferenceUpdater):
             return not self._references_exist(connection, tuple(change.original_path for change in changes))
         finally: connection.close()
 
+    def references_exist(self, paths: tuple[str, ...]) -> bool:
+        connection = self.factory()
+        try: return self._references_exist(connection, paths)
+        finally: connection.close()
+
+    def restore_database(self) -> None:
+        if not self.backup_path: raise RuntimeError("No verified database backup is associated with this job.")
+        LogicalDatabaseBackup(self.factory, self.project_data).restore(self.backup_path)
+        self.repository.set_all_status(self.job_id, "UPDATED", "ROLLED_BACK")
+
     def _references_exist(self, connection, paths: tuple[str, ...]) -> bool:
         if not self.tables: self.discover()
         for table in self._all_tables(self.tables.prefix):

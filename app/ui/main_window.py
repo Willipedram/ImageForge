@@ -32,6 +32,7 @@ from app.ui.images_page import ImagesPage
 from app.ui.offline_page import OfflinePage
 from app.ui.online_page import OnlinePipelinePage
 from app.ui.server_page import ServerConnectionPage
+from app.ui.safety_page import SafetyPage
 
 
 class PlaceholderPage(QWidget):
@@ -179,6 +180,9 @@ class SettingsPage(QWidget):
         self.retention = QSpinBox()
         self.retention.setRange(1, 3650)
         self.retention.setValue(settings.backup_retention_days)
+        self.retention_policy = QComboBox()
+        self.retention_policy.addItems(["7_days", "30_days", "90_days", "never"])
+        self.retention_policy.setCurrentText(settings.backup_retention_policy)
         self.log_level = QComboBox()
         self.log_level.addItems(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
         self.log_level.setCurrentText(settings.logging_level)
@@ -191,6 +195,7 @@ class SettingsPage(QWidget):
         form.addRow("Maximum image pixels", self.max_pixels)
         form.addRow("Processing timeout", self.timeout)
         form.addRow("Backup retention (days)", self.retention)
+        form.addRow("Backup retention policy", self.retention_policy)
         form.addRow("Logging level", self.log_level)
         save = QPushButton("Save settings")
         save.setObjectName("primaryButton")
@@ -208,6 +213,7 @@ class SettingsPage(QWidget):
         self.settings.optimization_max_pixels = self.max_pixels.value() * 1_000_000
         self.settings.optimization_timeout_seconds = float(self.timeout.value())
         self.settings.backup_retention_days = self.retention.value()
+        self.settings.backup_retention_policy = self.retention_policy.currentText()
         self.settings.logging_level = self.log_level.currentText()
         self.saved.emit(self.settings)
 
@@ -236,10 +242,10 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(tagline)
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
-        for label in ("Dashboard", "Offline Optimization", "Online Pipeline", "Database Review", "Server Connection", "Images", "Jobs & History", "Logs", "Settings"):
+        for label in ("Dashboard", "Offline Optimization", "Online Pipeline", "Database Review", "Final Safety", "Server Connection", "Images", "Jobs & History", "Logs", "Settings"):
             QListWidgetItem(label, self.navigation)
         side_layout.addWidget(self.navigation, 1)
-        version = QLabel("Phase 9  •  Database Safety")
+        version = QLabel("Phase 10  •  Final Safety")
         version.setObjectName("versionLabel")
         side_layout.addWidget(version)
 
@@ -254,6 +260,8 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.online_page)
         self.database_page = DatabaseChangesPage()
         self.pages.addWidget(self.database_page)
+        self.safety_page = SafetyPage()
+        self.pages.addWidget(self.safety_page)
         self.pages.addWidget(ServerConnectionPage(Path(settings.project_data_path)))
         if engine:
             from app.database.inventory import InventoryRepository

@@ -145,6 +145,24 @@ def test_reconcile_verified_remote_sidecar_after_crash(online):
     assert server.files[item.remote_path] == b"original-jpeg"
 
 
+def test_final_safety_hook_runs_and_cleanup_stage_resumes(online):
+    workflow, _, _, _ = online
+    calls = []
+    class Finalizer:
+        def finalize(self, job_id):
+            calls.append(job_id)
+            return type("Report", (), {"originals_deleted": 0})()
+    workflow.finalizer = Finalizer()
+    job_id = workflow.create("final-safety.test")
+    workflow.run(job_id)
+    assert calls == [job_id]
+    # A crash after the CLEANUP transition invokes only the idempotent finalizer on resume.
+    job = workflow.engine.repository.get(job_id); job.status = JobStatus.CLEANUP
+    workflow.engine.repository.save(job); calls.clear()
+    workflow.run(job_id)
+    assert calls == [job_id] and workflow.engine.repository.get(job_id).status is JobStatus.COMPLETED
+
+
 def test_schema_migrates_five_to_online_tables(tmp_path):
     database = tmp_path / "v5.db"
     with sqlite3.connect(database) as connection: connection.execute("PRAGMA user_version=5")
@@ -153,4 +171,4 @@ def test_schema_migrates_five_to_online_tables(tmp_path):
         tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert {"online_runs", "online_items"} <= tables
-    assert version == DATABASE_SCHEMA_VERSION == 7
+    assert version == DATABASE_SCHEMA_VERSION == 8
