@@ -18,7 +18,10 @@ from app.server.base import RemoteEntry, RemoteServer
 
 class FakeServer(RemoteServer):
     def __init__(self, *, checksums=True):
-        self.files = {"/site/wp-config.php": b"config", "/site/index.php": b"index",
+        self.files = {"/site/wp-config.php": (
+            b"define('DB_NAME','wp'); define('DB_USER','user'); "
+            b"define('DB_PASSWORD','secret'); define('DB_HOST','localhost');"
+        ), "/site/index.php": b"index",
                       "/site/wp-content/uploads/2026/photo.jpg": b"original-jpeg"}
         self.directories = {"/", "/site", "/site/wp-admin", "/site/wp-includes", "/site/wp-content",
                             "/site/wp-content/uploads", "/site/wp-content/uploads/2026"}
@@ -126,7 +129,22 @@ def test_scan_only_populates_remote_inventory_without_downloading_or_writing(onl
     assert "Scanning website" in stages
     assert "Scanning folder" in stages
     assert server.files == before_files and not updater.prepared and not updater.applied
-    assert server.prefix_reads == 0
+    # The only bounded read is wp-config.php; image bodies/headers are not read.
+    assert server.prefix_reads == 1
+
+
+def test_scan_can_continue_to_local_optimization_preview(online):
+    workflow, _, updater, _ = online
+    job_id = workflow.create("preview.test", "/")
+    workflow.scan_only(job_id)
+
+    report = workflow.prepare_preview(job_id)
+
+    item = next(workflow.manifest(job_id))
+    job = workflow.engine.repository.get(job_id)
+    assert report.total == 1 and item.status is OnlineItemStatus.READY
+    assert job.status is JobStatus.PAUSED and job.resume_state is JobStatus.VALIDATING
+    assert not updater.prepared and not updater.applied
 
 
 def test_public_http_download_is_preferred_after_ftp_inventory(online):

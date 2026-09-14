@@ -108,6 +108,21 @@ class OnlineWorkflow:
         finally:
             self.server.disconnect()
 
+    def prepare_preview(self, job_id: str,
+                        progress: Callable[[str, int, int, str], None] | None = None) -> OnlineReport:
+        """Download and optimize candidates locally without changing the website."""
+        try:
+            job = self.engine.repository.get(job_id)
+            if job.status is JobStatus.PAUSED:
+                self.engine.resume(job_id)
+            self._download(job_id, progress)
+            self._optimize(job_id, progress)
+            if self.engine.repository.get(job_id).status is JobStatus.VALIDATING:
+                self.engine.pause(job_id)
+            return self.repository.report(job_id)
+        finally:
+            self.server.disconnect()
+
     def pause(self, job_id: str) -> None:
         self.engine.pause(job_id)
 

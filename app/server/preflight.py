@@ -11,6 +11,8 @@ from uuid import uuid4
 from app.server.base import RemoteServer
 from app.server.discovery import DiscoveryTrace, SiteDiscoverer, SiteDiscovery
 from app.server.errors import PermissionDenied
+from app.server.paths import safe_join
+from app.server.wordpress_config import WordPressDatabaseSettings, parse_wordpress_database_settings
 from app.utils.checkpoints import log_keypoint
 
 logger = logging.getLogger(__name__)
@@ -27,10 +29,11 @@ class CheckResult:
 class PreflightReport:
     checks: tuple[CheckResult, ...]
     discovery: SiteDiscovery | None
+    database: WordPressDatabaseSettings | None = None
 
     @property
     def passed(self) -> bool:
-        return all(check.passed for check in self.checks if check.name != "Database access")
+        return all(check.passed for check in self.checks if not check.name.startswith("Database"))
 
 
 class PreflightService:
@@ -42,6 +45,7 @@ class PreflightService:
     def run(self, remote_root: str, discovery_roots: tuple[str, ...] = ()) -> PreflightReport:
         checks: list[CheckResult] = []
         discovery = None
+        database = None
         checkpoint = "connection"
         run_id = uuid4().hex[:12]
         try:
@@ -191,5 +195,26 @@ class PreflightService:
         free = shutil.disk_usage(self.project_data).free
         checks.append(CheckResult("Local disk space", free >= self.minimum_free_bytes, f"{free} bytes available"))
         checks.append(CheckResult("ProjectData", self.project_data.is_dir(), str(self.project_data)))
-        checks.append(CheckResult("Database access", True, "Deferred to a future phase"))
-        return PreflightReport(tuple(checks), discovery)
+        if discovery and discovery.wordpress and discovery.site_root:
+            try:
+                config_path = safe_join(discovery.site_root, "wp-config.php")
+                database = parse_wordpress_database_settings(
+                    self.server.read_prefix(config_path, 256 * 1024)
+                )
+                location = ("hosting-local" if database.host.casefold() in {"localhost", "127.0.0.1"}
+                            else "remote")
+                checks.append(CheckResult(
+                    "Database configuration", True,
+                    f"Read safely from wp-config.php: database={database.database}, "
+                    f"host={database.host}:{database.port} ({location}); password hidden",
+                ))
+                log_keypoint(logger, "wordpress_database_config", "passed", context={
+                    "host": database.host, "port": database.port, "database": database.database,
+                    "password": "[REDACTED]",
+                })
+            except Exception as exc:
+                checks.append(CheckResult("Database configuration", False, str(exc)))
+                log_keypoint(logger, "wordpress_database_config", "stopped", error=exc)
+        else:
+            checks.append(CheckResult("Database configuration", False, "WordPress must be discovered first"))
+        return PreflightReport(tuple(checks), discovery, database)

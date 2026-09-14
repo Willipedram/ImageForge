@@ -222,6 +222,15 @@ class ServerConnectionPage(QWidget):
                 f"Elementor: {'Yes' if site.elementor else 'No'}",
                 "", "✓ Website scanner configured — open Scan > Website and click Scan website.",
             ])
+            if report.database:
+                database = report.database
+                lines.extend([
+                    "", "Database settings read safely from wp-config.php",
+                    f"Database: {database.database}",
+                    f"Host: {database.host}:{database.port}",
+                    f"Username: {database.username}",
+                    "Password: hidden (never displayed or written to logs)",
+                ])
         elif report.discovery:
             lines.extend(["", *self._discovery_help(report.discovery)])
         self.results.setPlainText("\n".join(lines))

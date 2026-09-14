@@ -149,6 +149,15 @@ def test_windows_executable_workflow_publishes_click_to_run_artifact():
     assert "scripts\\build_windows.ps1" in launcher
 
 
+def test_online_ui_exposes_post_scan_preview_step_and_database_discovery():
+    online_page = Path("app/ui/online_page.py").read_text(encoding="utf-8")
+    preflight = Path("app/server/preflight.py").read_text(encoding="utf-8")
+    assert "Download & prepare preview" in online_page
+    assert "prepare_preview" in online_page
+    assert "parse_wordpress_database_settings" in preflight
+    assert "password hidden" in preflight
+
+
 def test_release_verification_works_without_git(monkeypatch, capsys):
     from scripts import verify_release
 

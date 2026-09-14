@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QProgre
                                QVBoxLayout, QWidget)
 
 from app.core.jobs import JobStatus
+from app.database.optimization import OptimizationRepository
+from app.image.optimizer import OfflineOptimizer
 from app.online.workflow import OnlineWorkflow
 from app.server import ConnectionConfig, RuntimeCredentials, create_server
 from app.utils.checkpoints import log_keypoint
@@ -26,18 +28,21 @@ class OnlineWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, workflow: OnlineWorkflow, job_id: str) -> None:
-        super().__init__(); self.workflow, self.job_id = workflow, job_id
+    def __init__(self, workflow: OnlineWorkflow, job_id: str, action: str = "scan") -> None:
+        super().__init__(); self.workflow, self.job_id, self.action = workflow, job_id, action
 
     @Slot()
     def run(self) -> None:
         try:
-            self.finished.emit(self.workflow.scan_only(self.job_id, self.progressed.emit))
+            operation = (self.workflow.scan_only if self.action == "scan"
+                         else self.workflow.prepare_preview)
+            self.finished.emit((self.action, operation(self.job_id, self.progressed.emit)))
         except Exception as exc:
             log_keypoint(logger, "website_scan", "stopped", job_id=self.job_id, error=exc)
             self.failed.emit(f"{type(exc).__name__}: {exc}")
         finally:
-            self.workflow.server.forget_credentials()
+            if self.action == "preview":
+                self.workflow.server.forget_credentials()
 
 
 class OnlinePipelinePage(QWidget):
@@ -94,6 +99,7 @@ class OnlinePipelinePage(QWidget):
         self.guide.setText("✓ Step 1 complete  →  Step 2: click Scan website  →  Step 3: review results")
         self.current.setText("Connection verified on Servers page")
         self.start_button.setText("Scan website")
+        self.start_button.setProperty("nextAction", None)
         self.start_button.setEnabled(True)
 
     def _start(self) -> None:
@@ -107,17 +113,24 @@ class OnlinePipelinePage(QWidget):
             config, credentials, discovery = self._connection
             server = create_server(config, credentials)
             self.workflow = OnlineWorkflow(
-                self.project_data, self.engine, server, None, None, resources=self.resources,
+                self.project_data, self.engine, server,
+                OfflineOptimizer(
+                    self.project_data,
+                    OptimizationRepository(self.engine.repository),
+                    resources=self.resources,
+                ),
+                None, resources=self.resources,
                 public_base_url=(f"https://{config.website_domain}"
                                  if config.website_domain else None),
             )
             self.job_id = self.workflow.create(config.host, discovery.site_root or config.remote_root)
             self._connection = None
-        self.started = time.monotonic(); thread = QThread(self); worker = OnlineWorker(self.workflow, self.job_id); worker.moveToThread(thread)
+        action = "preview" if self.start_button.property("nextAction") == "preview" else "scan"
+        self.started = time.monotonic(); thread = QThread(self); worker = OnlineWorker(self.workflow, self.job_id, action); worker.moveToThread(thread)
         self.guide.setText("✓ Step 1  →  ● Step 2: scanning now  →  Step 3: review results")
         thread.started.connect(worker.run); worker.progressed.connect(self._progressed); worker.finished.connect(self._finished)
         worker.failed.connect(self._failed); worker.finished.connect(thread.quit); worker.failed.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater); thread.finished.connect(lambda: self.start_button.setEnabled(False))
+        thread.finished.connect(worker.deleteLater)
         self._thread, self._worker = thread, worker; self.start_button.setEnabled(False); thread.start()
 
     @Slot(str, int, int, str)
@@ -127,12 +140,21 @@ class OnlinePipelinePage(QWidget):
         self.elapsed.setText(f"{elapsed:.1f} s"); self.eta.setText(f"{max(0, total-done)/(done/elapsed):.1f} s" if done else "—")
 
     @Slot(object)
-    def _finished(self, report) -> None:
-        self.stage.setText("Website scan completed (no remote files changed)"); self.bytes.setText(f"{report.bytes_downloaded} B / {report.bytes_uploaded} B")
+    def _finished(self, result) -> None:
+        action, report = result
+        self.bytes.setText(f"{report.bytes_downloaded} B / {report.bytes_uploaded} B")
         self.retries.setText(str(report.retries)); self.errors.setText(str(report.failed)); self._refresh()
-        self.start_button.setEnabled(False)
-        self.start_button.setText("Reconnect to scan again")
-        self.guide.setText("✓ Step 1  →  ✓ Step 2  →  Step 3: review the image table below")
+        if action == "scan":
+            self.stage.setText("Inventory ready — continue to create a local optimization preview")
+            self.start_button.setText("Download & prepare preview")
+            self.start_button.setProperty("nextAction", "preview")
+            self.start_button.setEnabled(True)
+            self.guide.setText("✓ Connection  →  ✓ Inventory  →  Step 3: prepare a safe local preview")
+        else:
+            self.stage.setText("Optimization preview ready — no website files were changed")
+            self.start_button.setText("Preview complete")
+            self.start_button.setEnabled(False)
+            self.guide.setText("✓ Connection  →  ✓ Inventory  →  ✓ Local preview ready for review")
 
     @Slot(str)
     def _failed(self, message) -> None:
