@@ -58,6 +58,9 @@ class SFTPServer(RemoteServer):
             self._ssh.close()
         self._client = self._ssh = None
 
+    def forget_credentials(self) -> None:
+        self._credentials = RuntimeCredentials("", "")
+
     def _require(self) -> Any:
         if self._client is None:
             raise ConnectionFailed("The remote connection is not open.")
