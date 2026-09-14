@@ -33,6 +33,7 @@ class ConnectionConfig:
     timeout_seconds: float = 20.0
     verify_tls: bool = True
     verify_host_key: bool = True
+    website_domain: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,3 +91,6 @@ class RemoteServer(ABC):
     def read_prefix(self, path: str, maximum_bytes: int) -> bytes:
         """Read only enough leading bytes for metadata inspection."""
         ...
+
+    def forget_credentials(self) -> None:
+        """Release runtime authentication material after a UI operation."""
