@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import ftplib
+import importlib.metadata
 import json
 import logging
 import sqlite3
 import sys
 import tracemalloc
-from uuid import uuid4
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
 from app.config.settings import ConfigurationStore, default_project_data_path
 from app.core.engine import JobEngine
 from app.core.jobs import JobStatus
-from app.core.runtime_versions import runtime_versions
+from app.core.runtime_versions import _installed_version, runtime_versions
 from app.core.version import APP_VERSION, DATA_SCHEMA_VERSION
 from app.database.jobs import DATABASE_SCHEMA_VERSION, JobRepository
 from app.database.offline import OfflineRepository
@@ -31,7 +33,7 @@ from app.offline.models import LocalItemStatus
 from app.offline.workflow import OfflineWorkflow
 from app.online.models import OnlineItem
 from app.storage.project_data import ProjectDataManager
-from app.utils.logging import configure_logging
+from app.utils.logging import configure_logging, read_live_logs
 
 
 class CredentialError(Exception):
@@ -53,6 +55,7 @@ class CredentialBackend:
 def test_windows_credentials_use_secure_backend_and_reject_unsafe_ids():
     backend = CredentialBackend(); provider = WindowsCredentialProvider(backend)
     provider.save("sftp:example.test", RuntimeCredentials("alice", "release-secret"))
+    assert backend.values["ImageForge/sftp:example.test"]["CredentialBlob"] == "release-secret"
     assert "release-secret" not in repr(provider.load("sftp:example.test"))
     assert provider.load("sftp:example.test").password == "release-secret"
     provider.delete("sftp:example.test"); assert provider.load("sftp:example.test") is None
@@ -63,7 +66,12 @@ def test_logs_configuration_and_sqlite_never_persist_keyed_secrets(tmp_path):
     log = configure_logging(tmp_path)
     logging.getLogger("security").error("password=release-secret token=abc123")
     for handler in logging.getLogger().handlers: handler.flush()
-    assert "release-secret" not in log.read_text(encoding="utf-8")
+    log_text = log.read_text(encoding="utf-8")
+    assert "release-secret" not in log_text
+    assert "thread=MainThread" in log_text
+    live = read_live_logs()
+    assert live and "release-secret" not in live[-1].message
+    assert live[-1].logger == "security" and live[-1].thread == "MainThread"
     store = ConfigurationStore(tmp_path); settings = store.load(); store.save(settings)
     repository = JobRepository(tmp_path / "jobs" / "state.db"); repository.initialize()
     raw = store.path.read_bytes() + repository.database_path.read_bytes()
@@ -99,9 +107,70 @@ def test_release_versions_and_packaging_exclude_project_data(monkeypatch, tmp_pa
     versions = runtime_versions(); assert versions["application"] == APP_VERSION and "webp_encoder" in versions
     spec = Path("ImageForge.spec").read_text(encoding="utf-8")
     assert 'name="ImageOptimizer"' in spec and "ProjectData" not in spec
+    assert "copy_metadata" in spec and '"Pillow"' in spec
     monkeypatch.setattr(sys, "frozen", True, raising=False); monkeypatch.setattr(sys, "executable", str(tmp_path / "ImageOptimizer.exe"))
     monkeypatch.delenv("IMAGEFORGE_PROJECT_DATA", raising=False)
     assert default_project_data_path() == tmp_path / "ProjectData"
+
+
+def test_runtime_version_falls_back_when_frozen_metadata_is_missing(monkeypatch):
+    def metadata_missing(_distribution):
+        raise importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(importlib.metadata, "version", metadata_missing)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda _module: SimpleNamespace(__version__="12.3.0"),
+    )
+    assert _installed_version("Pillow", "PIL") == "12.3.0"
+
+
+def test_windows_executable_workflow_publishes_click_to_run_artifact():
+    workflow = Path(".github/workflows/windows-executable.yml").read_text(encoding="utf-8")
+    launcher = Path("build_windows.bat").read_text(encoding="utf-8")
+    build_script = Path("scripts/build_windows.ps1").read_text(encoding="utf-8")
+    assert "scripts\\build_windows.ps1" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+    assert "dist/ImageOptimizer.exe" in workflow
+    assert "ImageOptimizer.exe.sha256" in workflow
+    assert "--check-startup --project-data" in build_script
+    assert 'Get-Command "py.exe"' in build_script
+    assert 'Get-Command "python.exe"' in build_script
+    assert "Python 3.11 or newer was not found" in build_script
+    assert "Invoke-NativeCommand" in build_script
+    assert "[switch]$RunTests" in build_script
+    assert "if ($RunTests)" in build_script
+    assert ".imageforge-packaging-dependencies" in build_script
+    assert "Dependencies unchanged; using the cached build environment." in build_script
+    assert "$PyInstallerArguments += \"--clean\"" in build_script
+    assert "pip install --upgrade pip" not in build_script
+    assert ".\\scripts\\build_windows.ps1 -Clean" in workflow
+    assert "scripts\\build_windows.ps1" in launcher
+
+
+def test_release_verification_works_without_git(monkeypatch, capsys):
+    from scripts import verify_release
+
+    monkeypatch.setattr(
+        verify_release.subprocess,
+        "check_output",
+        lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError("git")),
+    )
+    assert verify_release.main() == 0
+    assert "tracked-file audit was skipped" in capsys.readouterr().out
+
+
+def test_release_verification_does_not_launch_git_for_source_zip(monkeypatch, tmp_path):
+    from scripts import verify_release
+
+    monkeypatch.setattr(verify_release, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        verify_release.subprocess,
+        "check_output",
+        lambda *args, **kwargs: pytest.fail("Git must not run for a source ZIP"),
+    )
+    assert verify_release._tracked_files() is None
 
 
 def test_job_database_v8_migrates_and_records_runtime_versions(tmp_path):
@@ -141,6 +210,99 @@ def test_ftp_and_ftps_connect_without_leaking_password(monkeypatch):
         server.connect(); assert server.connected and clients[-1].logged == ("u", "secret")
         if protocol is Protocol.FTPS: assert clients[-1].tls
         assert "secret" not in repr(server._credentials); server.disconnect()
+
+
+def test_ftp_missing_stat_uses_filesystem_error_instead_of_stop_iteration(monkeypatch):
+    server = FTPServer(
+        ConnectionConfig(Protocol.FTP, "example.test", 21), RuntimeCredentials("u", "secret")
+    )
+    monkeypatch.setattr(server, "list", lambda path: [])
+    with pytest.raises(FileNotFoundError, match="public_html"):
+        server.stat("/public_html")
+    assert server.exists("/public_html") is False
+
+
+def test_ftp_prefix_read_drains_hosting_proxy_preliminary_reply():
+    class DataSocket:
+        def __init__(self):
+            self.parts = iter((b"image-header", b""))
+
+        def recv(self, _size):
+            return next(self.parts)
+
+        def close(self):
+            pass
+
+    class Client:
+        def __init__(self):
+            self.responses = iter((
+                ftplib.error_reply("150-Warning: client is in ASCII mode"),
+                None,
+            ))
+            self.response_count = 0
+            self.binary_mode = False
+
+        def voidcmd(self, command):
+            assert command == "TYPE I"
+            self.binary_mode = True
+            return "200 Type set to I"
+
+        def transfercmd(self, command):
+            assert self.binary_mode
+            assert command == "RETR /wp-content/uploads/photo.jpg"
+            return DataSocket()
+
+        def voidresp(self):
+            self.response_count += 1
+            response = next(self.responses)
+            if response:
+                raise response
+            return "226 Transfer complete"
+
+    client = Client()
+    server = FTPServer(
+        ConnectionConfig(Protocol.FTP, "example.test", 21),
+        RuntimeCredentials("u", "secret"),
+    )
+    server._client = client
+
+    assert server.read_prefix("/wp-content/uploads/photo.jpg", 64) == b"image-header"
+    assert client.response_count == 2
+
+
+def test_ftp_bulk_transfers_use_large_blocks_without_duplicate_checksum_download(tmp_path):
+    class Client:
+        def __init__(self):
+            self.download_blocksize = self.upload_blocksize = 0
+            self.uploaded = b""
+
+        def retrbinary(self, command, callback, blocksize):
+            assert command == "RETR /uploads/photo.jpg"
+            self.download_blocksize = blocksize
+            callback(b"remote-image")
+
+        def storbinary(self, command, stream, blocksize):
+            assert command == "STOR /uploads/photo.webp"
+            self.upload_blocksize = blocksize
+            self.uploaded = stream.read()
+
+    client = Client()
+    server = FTPServer(
+        ConnectionConfig(Protocol.FTP, "example.test", 21),
+        RuntimeCredentials("u", "secret"),
+    )
+    server._client = client
+    downloaded = tmp_path / "photo.jpg"
+    upload = tmp_path / "photo.webp"
+    upload.write_bytes(b"optimized-image")
+
+    server.download("/uploads/photo.jpg", downloaded)
+    server.upload(upload, "/uploads/photo.webp")
+
+    assert downloaded.read_bytes() == b"remote-image"
+    assert client.uploaded == b"optimized-image"
+    assert client.download_blocksize == client.upload_blocksize == 256 * 1024
+    assert server.checksum("/uploads/photo.jpg") is None
 
 
 def test_sftp_connects_with_host_key_verification(monkeypatch):
