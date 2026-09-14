@@ -1,0 +1,41 @@
+name: Windows executable
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build and verify the portable executable
+        shell: powershell
+        run: .\scripts\build_windows.ps1 -Clean
+
+      - name: Create SHA-256 checksum
+        shell: powershell
+        run: |
+          $hash = (Get-FileHash dist\ImageOptimizer.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ImageOptimizer.exe" | Set-Content -Encoding ascii dist\ImageOptimizer.exe.sha256
+
+      - name: Upload click-to-run Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageOptimizer-Windows-x64
+          path: |
+            dist/ImageOptimizer.exe
+            dist/ImageOptimizer.exe.sha256
+          if-no-files-found: error
+          retention-days: 30

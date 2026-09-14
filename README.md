@@ -121,6 +121,10 @@ The live Logs page shows a bounded event stream using INFO, OK, WARNING, ERROR, 
 
 ## Installation and running
 
+Windows users who only want to run the application can download the `ImageOptimizer-Windows-x64` artifact from the latest successful **Windows executable** GitHub Actions run, extract it, and double-click `ImageOptimizer.exe`. Python is not required for the packaged application. See [Installation and Windows executable build](INSTALL.md) for download, checksum, SmartScreen, and local-build instructions.
+
+راهنمای قدم‌به‌قدم و ساده فارسی: [اجرای برنامه در ویندوز](RUN_WINDOWS_FA.md)
+
 Python 3.11 or newer is recommended.
 
 ```powershell
