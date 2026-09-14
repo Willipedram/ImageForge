@@ -265,6 +265,41 @@ def test_ftp_prefix_read_drains_hosting_proxy_preliminary_reply():
     assert client.response_count == 2
 
 
+def test_ftp_bulk_transfers_use_large_blocks_without_duplicate_checksum_download(tmp_path):
+    class Client:
+        def __init__(self):
+            self.download_blocksize = self.upload_blocksize = 0
+            self.uploaded = b""
+
+        def retrbinary(self, command, callback, blocksize):
+            assert command == "RETR /uploads/photo.jpg"
+            self.download_blocksize = blocksize
+            callback(b"remote-image")
+
+        def storbinary(self, command, stream, blocksize):
+            assert command == "STOR /uploads/photo.webp"
+            self.upload_blocksize = blocksize
+            self.uploaded = stream.read()
+
+    client = Client()
+    server = FTPServer(
+        ConnectionConfig(Protocol.FTP, "example.test", 21),
+        RuntimeCredentials("u", "secret"),
+    )
+    server._client = client
+    downloaded = tmp_path / "photo.jpg"
+    upload = tmp_path / "photo.webp"
+    upload.write_bytes(b"optimized-image")
+
+    server.download("/uploads/photo.jpg", downloaded)
+    server.upload(upload, "/uploads/photo.webp")
+
+    assert downloaded.read_bytes() == b"remote-image"
+    assert client.uploaded == b"optimized-image"
+    assert client.download_blocksize == client.upload_blocksize == 256 * 1024
+    assert server.checksum("/uploads/photo.jpg") is None
+
+
 def test_sftp_connects_with_host_key_verification(monkeypatch):
     class SSH:
         def load_system_host_keys(self): self.loaded = True

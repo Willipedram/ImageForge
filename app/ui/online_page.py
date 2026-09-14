@@ -142,7 +142,9 @@ class OnlinePipelinePage(QWidget):
     def _poll_logs(self) -> None:
         for record in read_live_logs(self._last_log_id, 200):
             self._last_log_id = record.id
-            if record.logger not in {"app.online.workflow", "app.ui.online_page"}:
+            if record.logger not in {
+                "app.online.workflow", "app.ui.online_page", "app.server.ftp"
+            }:
                 continue
             self.live_log.appendPlainText(
                 f"[{record.created_at[11:23]}] {record.level:<7} {record.message}"
