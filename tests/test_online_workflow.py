@@ -24,6 +24,7 @@ class FakeServer(RemoteServer):
                             "/site/wp-content/uploads", "/site/wp-content/uploads/2026"}
         self._connected = False; self.checksums = checksums; self.fail_upload_once = False; self.truncate_upload = False
         self.prefix_reads = 0
+        self.download_paths = []
 
     @property
     def connected(self): return self._connected
@@ -43,6 +44,7 @@ class FakeServer(RemoteServer):
         if path in self.directories: return RemoteEntry(path, PurePosixPath(path).name, True)
         data = self.files[path]; return RemoteEntry(path, PurePosixPath(path).name, False, len(data))
     def download(self, remote_path, destination):
+        self.download_paths.append(remote_path)
         data = self.files[remote_path]
         if hasattr(destination, "write"): destination.write(data)
         else: Path(destination).write_bytes(data)
@@ -125,6 +127,35 @@ def test_scan_only_populates_remote_inventory_without_downloading_or_writing(onl
     assert "Scanning folder" in stages
     assert server.files == before_files and not updater.prepared and not updater.applied
     assert server.prefix_reads == 0
+
+
+def test_public_http_download_is_preferred_after_ftp_inventory(online):
+    workflow, server, _, _ = online
+    urls = []
+
+    def public_download(url, destination):
+        urls.append(url)
+        destination.write_bytes(b"original-jpeg")
+
+    workflow.public_base_url = "https://example.test"
+    workflow.public_downloader = public_download
+    job_id = workflow.create("example.test", "/")
+    workflow.run(job_id)
+
+    assert urls == ["https://example.test/wp-content/uploads/2026/photo.jpg"]
+    assert "/site/wp-content/uploads/2026/photo.jpg" not in server.download_paths
+
+
+def test_public_download_mismatch_safely_falls_back_to_ftp(online):
+    workflow, server, _, _ = online
+    workflow.public_base_url = "https://example.test"
+    workflow.public_downloader = lambda _url, destination: destination.write_bytes(b"wrong")
+    job_id = workflow.create("example.test", "/")
+
+    report = workflow.run(job_id)
+
+    assert report.failed == 0
+    assert "/site/wp-content/uploads/2026/photo.jpg" in server.download_paths
 
 
 def test_upload_retries_without_touching_original(online):

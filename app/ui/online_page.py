@@ -107,7 +107,9 @@ class OnlinePipelinePage(QWidget):
             config, credentials, discovery = self._connection
             server = create_server(config, credentials)
             self.workflow = OnlineWorkflow(
-                self.project_data, self.engine, server, None, None, resources=self.resources
+                self.project_data, self.engine, server, None, None, resources=self.resources,
+                public_base_url=(f"https://{config.website_domain}"
+                                 if config.website_domain else None),
             )
             self.job_id = self.workflow.create(config.host, discovery.site_root or config.remote_root)
             self._connection = None

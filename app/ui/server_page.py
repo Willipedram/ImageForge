@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from app.server import ConnectionConfig, Protocol, RuntimeCredentials, create_server
 from app.server.credentials import CredentialProvider, RuntimeCredentialProvider, WindowsCredentialProvider
+from app.server.domain import infer_website_domain
 from app.server.preflight import PreflightReport, PreflightService
 from app.utils.checkpoints import log_keypoint
 
@@ -104,6 +105,8 @@ class ServerConnectionPage(QWidget):
         self.port.setRange(1, 65535)
         self.port.setValue(22)
         self.username = QLineEdit()
+        self.website_domain = QLineEdit()
+        self.website_domain.setPlaceholderText("Auto-detected, e.g. example.com")
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.Password)
         self.password.setPlaceholderText("Password")
@@ -114,12 +117,15 @@ class ServerConnectionPage(QWidget):
         self.remember_password.toggled.connect(self._remember_toggled)
         self.remember_password.setChecked(self.remember_password.isEnabled())
         self.host.editingFinished.connect(self._load_saved_credentials)
+        self.host.editingFinished.connect(self._infer_website_domain)
+        self.username.editingFinished.connect(self._infer_website_domain)
         self.strict_security = QCheckBox("Verify TLS certificate / SSH host key")
         self.strict_security.setChecked(True)
         self.protocol.currentTextChanged.connect(self._protocol_changed)
         for label, widget in (
             ("Protocol", self.protocol), ("Host", self.host), ("Port", self.port),
             ("Username", self.username), ("Password", self.password),
+            ("Website domain", self.website_domain),
             ("Remote root", self.remote_root), ("Security", self.strict_security),
             ("Credentials", self.remember_password),
         ):
@@ -140,6 +146,15 @@ class ServerConnectionPage(QWidget):
     def _protocol_changed(self, value: str) -> None:
         self.port.setValue(22 if value == Protocol.SFTP.value else 21)
 
+    def _infer_website_domain(self) -> None:
+        if self.website_domain.text().strip():
+            return
+        domain = infer_website_domain(
+            self.host.text(), self.username.text(), self.remote_root.text()
+        )
+        if domain:
+            self.website_domain.setText(domain)
+
     def _start(self) -> None:
         if self._thread and self._thread.isRunning():
             return
@@ -149,9 +164,15 @@ class ServerConnectionPage(QWidget):
             self.results.setPlainText("Host and username are required.")
             return
         protocol = Protocol(self.protocol.currentText())
+        self._infer_website_domain()
+        website_domain = infer_website_domain(self.website_domain.text())
+        if self.website_domain.text().strip() and not website_domain:
+            self.results.setPlainText("Website domain is invalid. Enter only a domain such as example.com.")
+            return
         config = ConnectionConfig(
             protocol, self.host.text().strip(), self.port.value(), self.remote_root.text().strip() or "/",
             verify_tls=self.strict_security.isChecked(), verify_host_key=self.strict_security.isChecked(),
+            website_domain=website_domain,
         )
         credentials = RuntimeCredentials(self.username.text(), self.password.text())
         self._pending_config = config

@@ -33,6 +33,7 @@ class ConnectionConfig:
     timeout_seconds: float = 20.0
     verify_tls: bool = True
     verify_host_key: bool = True
+    website_domain: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
