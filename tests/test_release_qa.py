@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ftplib
 import importlib.metadata
 import json
 import logging
@@ -214,6 +215,54 @@ def test_ftp_missing_stat_uses_filesystem_error_instead_of_stop_iteration(monkey
     with pytest.raises(FileNotFoundError, match="public_html"):
         server.stat("/public_html")
     assert server.exists("/public_html") is False
+
+
+def test_ftp_prefix_read_drains_hosting_proxy_preliminary_reply():
+    class DataSocket:
+        def __init__(self):
+            self.parts = iter((b"image-header", b""))
+
+        def recv(self, _size):
+            return next(self.parts)
+
+        def close(self):
+            pass
+
+    class Client:
+        def __init__(self):
+            self.responses = iter((
+                ftplib.error_reply("150-Warning: client is in ASCII mode"),
+                None,
+            ))
+            self.response_count = 0
+            self.binary_mode = False
+
+        def voidcmd(self, command):
+            assert command == "TYPE I"
+            self.binary_mode = True
+            return "200 Type set to I"
+
+        def transfercmd(self, command):
+            assert self.binary_mode
+            assert command == "RETR /wp-content/uploads/photo.jpg"
+            return DataSocket()
+
+        def voidresp(self):
+            self.response_count += 1
+            response = next(self.responses)
+            if response:
+                raise response
+            return "226 Transfer complete"
+
+    client = Client()
+    server = FTPServer(
+        ConnectionConfig(Protocol.FTP, "example.test", 21),
+        RuntimeCredentials("u", "secret"),
+    )
+    server._client = client
+
+    assert server.read_prefix("/wp-content/uploads/photo.jpg", 64) == b"image-header"
+    assert client.response_count == 2
 
 
 def test_sftp_connects_with_host_key_verification(monkeypatch):

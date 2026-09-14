@@ -148,6 +148,9 @@ class FTPServer(RemoteServer):
     def read_prefix(self, path: str, maximum_bytes: int) -> bytes:
         """Use a data socket directly so only a bounded header is transferred."""
         client = self._require()
+        # transfercmd(), unlike retrbinary(), does not select binary mode.
+        # Image headers must never be transferred through FTP ASCII conversion.
+        client.voidcmd("TYPE I")
         socket = client.transfercmd(f"RETR {normalize_remote_path(path)}")
         chunks = bytearray()
         try:
@@ -158,9 +161,32 @@ class FTPServer(RemoteServer):
                 chunks.extend(chunk)
         finally:
             socket.close()
-            # Closing a partial transfer can produce an expected 426 response.
+            self._finish_partial_transfer(client)
+        return bytes(chunks)
+
+    @staticmethod
+    def _finish_partial_transfer(client: ftplib.FTP) -> None:
+        """Synchronize the control channel after closing a bounded RETR early.
+
+        Some hosting FTP proxies emit more than one preliminary 1xx response
+        (for example a multiline ASCII-mode warning followed by transfer
+        statistics).  ``ftplib.voidresp`` rejects that extra response even
+        though the transfer is valid, leaving the final 226 queued and causing
+        the website scan to fail.  Drain those preliminary replies before the
+        next FTP command while still surfacing unexpected server responses.
+        """
+        for _ in range(4):
             try:
                 client.voidresp()
-            except ftplib.error_temp:
-                pass
-        return bytes(chunks)
+                return
+            except ftplib.error_reply as exc:
+                if str(exc).lstrip().startswith("1"):
+                    continue
+                raise
+            except ftplib.error_temp as exc:
+                # A server may report an intentionally interrupted partial
+                # transfer as 426. The control channel is synchronized then.
+                if str(exc).lstrip().startswith("426"):
+                    return
+                raise
+        raise ftplib.error_reply("Too many preliminary FTP transfer responses")
