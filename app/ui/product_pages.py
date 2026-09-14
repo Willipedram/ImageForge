@@ -14,6 +14,7 @@ from app.core.jobs import JobStatus
 from app.database.safety import SafetyRepository
 from app.ui.offline_page import OfflinePage
 from app.ui.online_page import OnlinePipelinePage
+from app.utils.logging import read_live_logs
 
 
 def _heading(layout, title: str, subtitle: str) -> None:
@@ -26,7 +27,8 @@ class ScanPage(QWidget):
     def __init__(self, project_data: Path, engine: JobEngine, settings, resources=None) -> None:
         super().__init__(); layout = QVBoxLayout(self); layout.setContentsMargins(28, 24, 28, 24)
         _heading(layout, "Scan", "Choose an offline folder or continue a verified online website workflow.")
-        self.tabs = QTabWidget(); self.offline = OfflinePage(project_data, engine, settings, resources); self.online = OnlinePipelinePage()
+        self.tabs = QTabWidget(); self.offline = OfflinePage(project_data, engine, settings, resources)
+        self.online = OnlinePipelinePage(project_data, engine, resources)
         self.tabs.addTab(self.offline, "Local folder"); self.tabs.addTab(self.online, "Website")
         layout.addWidget(self.tabs)
 
@@ -108,17 +110,24 @@ class RecoveryPage(QWidget):
 class LiveLogsPage(QWidget):
     LEVELS = ("ALL", "INFO", "OK", "WARNING", "ERROR", "CRITICAL", "SKIPPED", "RESUMED")
     def __init__(self, engine: JobEngine) -> None:
-        super().__init__(); self.engine, self.last_id = engine, 0
+        super().__init__(); self.engine, self.last_id, self.last_log_id = engine, 0, 0
         layout = QVBoxLayout(self); layout.setContentsMargins(28, 24, 28, 24)
         _heading(layout, "Logs", "Live, bounded operational event stream.")
         self.output = QTextEdit(); self.output.setReadOnly(True); self.output.setObjectName("logViewer"); layout.addWidget(self.output, 1)
         self.timer = QTimer(self); self.timer.timeout.connect(self.poll); self.timer.start(1000); self.poll()
     def poll(self):
+        for record in read_live_logs(self.last_log_id, 200):
+            self.last_log_id = record.id
+            timestamp = record.created_at[11:23]
+            self.output.append(
+                f"[{timestamp}] {record.level:<8} APP  {record.logger} "
+                f"({record.thread})  {record.message}"
+            )
         with self.engine.repository.connection() as connection:
             rows = connection.execute("SELECT * FROM events WHERE id>? ORDER BY id LIMIT 200", (self.last_id,)).fetchall()
         for row in rows:
             self.last_id = row["id"]; level = _event_level(row["event_type"], row["message"])
-            self.output.append(f"[{row['created_at'][11:19]}] {level:<8} {row['message']}")
+            self.output.append(f"[{row['created_at'][11:19]}] {level:<8} JOB  {row['message']}")
         if self.output.document().blockCount() > 2000:
             self.output.setPlainText("\n".join(self.output.toPlainText().splitlines()[-1000:]))
 

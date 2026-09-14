@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import posixpath
 import shutil
 import time
+import urllib.parse
+import urllib.request
 from collections.abc import Callable, Iterator
 from pathlib import Path, PurePosixPath
 from uuid import NAMESPACE_URL, uuid5
@@ -23,6 +26,9 @@ from app.server.base import RemoteServer
 from app.server.discovery import RemoteImageScanner, SiteDiscoverer
 from app.server.paths import normalize_remote_path, safe_join
 from app.server.preflight import PreflightService
+from app.utils.checkpoints import log_keypoint
+
+logger = logging.getLogger(__name__)
 
 
 class _RetryingServer(RemoteServer):
@@ -52,13 +58,17 @@ class OnlineWorkflow:
                  optimizer: OfflineOptimizer, updater: ReferenceUpdater,
                  repository: OnlineRepository | None = None,
                  sleeper: Callable[[float], None] = time.sleep, finalizer=None,
-                 resources: ResourceManager | None = None) -> None:
+                 resources: ResourceManager | None = None,
+                 public_base_url: str | None = None,
+                 public_downloader: Callable[[str, Path], None] | None = None) -> None:
         self.project_data = project_data.resolve()
         self.engine, self.server, self.optimizer, self.updater = engine, server, optimizer, updater
         self.repository = repository or OnlineRepository(engine.repository)
         self.sleeper = sleeper
         self.finalizer = finalizer
         self.resources = resources
+        self.public_base_url = public_base_url.rstrip("/") if public_base_url else None
+        self.public_downloader = public_downloader or self._download_public
 
     def create(self, target: str, remote_root: str = "/") -> str:
         root = normalize_remote_path(remote_root)
@@ -83,6 +93,32 @@ class OnlineWorkflow:
             self._database_update(job_id, progress)
             self._final_verify(job_id, progress)
             self._cleanup(job_id)
+            return self.repository.report(job_id)
+        finally:
+            self.server.disconnect()
+
+    def scan_only(self, job_id: str,
+                  progress: Callable[[str, int, int, str], None] | None = None) -> OnlineReport:
+        """Discover and persist the remote image inventory without modifying the server."""
+        try:
+            self._precheck_discover_scan(job_id, progress)
+            if self.engine.repository.get(job_id).status is JobStatus.DOWNLOADING:
+                self.engine.pause(job_id)
+            return self.repository.report(job_id)
+        finally:
+            self.server.disconnect()
+
+    def prepare_preview(self, job_id: str,
+                        progress: Callable[[str, int, int, str], None] | None = None) -> OnlineReport:
+        """Download and optimize candidates locally without changing the website."""
+        try:
+            job = self.engine.repository.get(job_id)
+            if job.status is JobStatus.PAUSED:
+                self.engine.resume(job_id)
+            self._download(job_id, progress)
+            self._optimize(job_id, progress)
+            if self.engine.repository.get(job_id).status is JobStatus.VALIDATING:
+                self.engine.pause(job_id)
             return self.repository.report(job_id)
         finally:
             self.server.disconnect()
@@ -135,17 +171,48 @@ class OnlineWorkflow:
         self._checkpoint(job_id, "online_precheck_complete", payload={"site_root": discovery.site_root})
         self.engine.transition(job_id, JobStatus.SCANNING)
         batch: list[OnlineItem] = []
-        scanner = RemoteImageScanner(_RetryingServer(self))
+        scanned = 0
+        directories_scanned = 0
+        scan_started = time.monotonic()
+
+        def directory_progress(path: str, directories: int) -> None:
+            nonlocal directories_scanned
+            directories_scanned = directories
+            logger.info(
+                "Website scan visiting directory=%s directories=%d images=%d",
+                path,
+                directories,
+                scanned,
+            )
+            self._progress(progress, "Scanning folder", scanned, 0, path)
+
+        # Inventory mode needs paths and byte sizes only. Reading 64 KiB from
+        # every image adds an FTP round trip and makes large sites appear hung.
+        scanner = RemoteImageScanner(
+            _RetryingServer(self),
+            inspect_dimensions=False,
+            directory_progress=directory_progress,
+        )
         # Scanner is lazy and stores batches rather than retaining the site inventory.
         for remote in scanner.scan(discovery.uploads):
             if not self._may_continue(job_id): break
             identifier = str(uuid5(NAMESPACE_URL, f"{job_id}:{remote.path}"))
             batch.append(OnlineItem(identifier, job_id, remote.path, remote.size or 0))
+            scanned += 1
+            if scanned == 1 or scanned % 25 == 0:
+                self._progress(progress, "Scanning website", scanned, 0, remote.path)
             if len(batch) >= 200:
                 self.repository.save_items(batch); batch.clear()
         self.repository.save_items(batch)
         total = self.repository.count(job_id)
+        self._progress(progress, "Scanning website", total, total, discovery.uploads)
         originals = sum(i.original_bytes for i in self.repository.iter_items(job_id))
+        logger.info(
+            "Website inventory completed directories=%d images=%d elapsed_seconds=%.2f",
+            directories_scanned,
+            total,
+            time.monotonic() - scan_started,
+        )
         self.engine.update_statistics(job_id, files_total=total, files_completed=0,
                                       original_bytes=originals, optimized_bytes=0, progress=0)
         self._checkpoint(job_id, "online_scan_complete", payload={"total": total})
@@ -163,11 +230,13 @@ class OnlineWorkflow:
             part = local.with_name(local.name + ".part")
             item.status, item.local_path = OnlineItemStatus.DOWNLOADING, str(local)
             self.repository.save_item(item)
-            if self.resources:
-                with self.resources.reserve_pool("download"):
+            downloaded_publicly = self._try_public_download(item, part)
+            if not downloaded_publicly:
+                if self.resources:
+                    with self.resources.reserve_pool("download"):
+                        self._remote(item, lambda: self.server.download(item.remote_path, part))
+                else:
                     self._remote(item, lambda: self.server.download(item.remote_path, part))
-            else:
-                self._remote(item, lambda: self.server.download(item.remote_path, part))
             local_hash = self._checksum(part)
             remote_hash = self._remote(item, lambda: self.server.checksum(item.remote_path))
             if remote_hash and remote_hash.casefold() != local_hash:
@@ -179,6 +248,36 @@ class OnlineWorkflow:
             self.repository.save_item(item); self._checkpoint(job_id, "download_verified", item)
             done += 1; self._progress(progress, "Downloading", done, total, item.remote_path)
         self.engine.transition(job_id, JobStatus.OPTIMIZING)
+
+    def _try_public_download(self, item: OnlineItem, destination: Path) -> bool:
+        if not self.public_base_url:
+            return False
+        run = self._run(item.job_id)
+        relative = self._relative(item.remote_path, run["site_root"])
+        encoded = "/".join(urllib.parse.quote(part) for part in PurePosixPath(relative).parts)
+        url = f"{self.public_base_url}/{encoded}"
+        try:
+            logger.info("HTTP image download started url=%s", url)
+            self.public_downloader(url, destination)
+            if item.original_bytes and destination.stat().st_size != item.original_bytes:
+                raise IOError("Public response size differs from FTP inventory metadata")
+            logger.info("HTTP image download completed url=%s bytes=%d",
+                        url, destination.stat().st_size)
+            return True
+        except Exception as exc:
+            destination.unlink(missing_ok=True)
+            logger.warning("HTTP image download unavailable; falling back to FTP path=%s reason=%s",
+                           item.remote_path, exc)
+            return False
+
+    @staticmethod
+    def _download_public(url: str, destination: Path) -> None:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "ImageForge/1.0", "Accept": "application/octet-stream"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response, destination.open("wb") as output:
+            shutil.copyfileobj(response, output, length=256 * 1024)
 
     def _optimize(self, job_id: str, progress) -> None:
         if self.engine.repository.get(job_id).status is not JobStatus.OPTIMIZING: return
@@ -358,6 +457,8 @@ class OnlineWorkflow:
             self.engine.repository.checkpoint(connection, job_id, operation,
                 item.status.value if item else self.engine.repository.get(job_id).status.value,
                 item.id if item else None, payload=payload, is_safe=safe)
+        log_keypoint(logger, operation, "passed" if safe else "stopped", job_id=job_id,
+                     item_id=item.id if item else None)
 
     def _run(self, job_id: str) -> dict:
         run = self.repository.run(job_id)
