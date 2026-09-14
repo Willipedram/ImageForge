@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mimetypes
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -25,6 +26,22 @@ class DiscoveryOptions:
     uploads_names: tuple[str, ...] = ("uploads", "media")
     themes_names: tuple[str, ...] = ("themes",)
     plugins_names: tuple[str, ...] = ("plugins",)
+    max_trace_directories: int = 250
+    ignored_directory_names: tuple[str, ...] = (
+        ".htpasswd", "logs", "stats", "public_ftp", "backups", "mail", "tmp",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryTrace:
+    path: str
+    depth: int
+    status: str
+    entry_count: int = 0
+    child_directories: tuple[str, ...] = ()
+    found_markers: tuple[str, ...] = ()
+    missing_markers: tuple[str, ...] = ()
+    error_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +57,10 @@ class SiteDiscovery:
     plugins: str | None = None
     woocommerce: bool = False
     elementor: bool = False
+    closest_path: str | None = None
+    missing_markers: tuple[str, ...] = ()
+    directories_checked: int = 0
+    empty_directories: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,14 +75,20 @@ class RemoteImage:
 
 
 class SiteDiscoverer:
-    def __init__(self, server: RemoteServer, options: DiscoveryOptions | None = None) -> None:
+    def __init__(self, server: RemoteServer, options: DiscoveryOptions | None = None,
+                 trace: Callable[[DiscoveryTrace], None] | None = None) -> None:
         self.server = server
         self.options = options or DiscoveryOptions()
+        self.trace = trace
+        self._trace_count = 0
 
     def discover(self, search_root: str = "/") -> SiteDiscovery:
         root = normalize_remote_path(search_root)
         queue = deque([(root, 0)])
         visited: set[str] = set()
+        best_path, best_score = root, -1
+        best_missing: tuple[str, ...] = ()
+        empty_directories: list[str] = []
         while queue and len(visited) < self.options.max_directories:
             directory, depth = queue.popleft()
             key = directory
@@ -70,16 +97,47 @@ class SiteDiscoverer:
             visited.add(key)
             try:
                 entries = self.server.list(directory)
-            except (PermissionError, PermissionDenied):
+            except (PermissionError, PermissionDenied) as exc:
+                self._emit_trace(DiscoveryTrace(directory, depth, "denied", error_type=type(exc).__name__))
                 continue
             names = {entry.name.casefold(): entry for entry in entries}
-            structural = {"wp-admin", "wp-includes"}
+            if not entries and len(empty_directories) < 50:
+                empty_directories.append(directory)
             content_entry = next(
                 (names[name.casefold()] for name in self.options.content_names if name.casefold() in names), None
             )
-            wordpress = structural.issubset(names) and content_entry is not None and any(
-                marker.casefold() in names for marker in self.options.root_markers
+            has_root_marker = any(marker.casefold() in names for marker in self.options.root_markers)
+            missing = tuple(
+                label for present, label in (
+                    ("wp-admin" in names, "wp-admin"),
+                    ("wp-includes" in names, "wp-includes"),
+                    (content_entry is not None, "wp-content"),
+                    (has_root_marker, "wp-config.php/wp-load.php/index.php"),
+                ) if not present
             )
+            score = 4 - len(missing)
+            ignored = {name.casefold() for name in self.options.ignored_directory_names}
+            children = tuple(sorted(
+                entry.name for entry in entries
+                if entry.is_directory and entry.name.casefold() not in ignored
+                and (self.options.follow_symlinks or not entry.is_symlink)
+            ))
+            found = tuple(label for present, label in (
+                ("wp-admin" in names, "wp-admin"),
+                ("wp-includes" in names, "wp-includes"),
+                (content_entry is not None, content_entry.name if content_entry else "wp-content"),
+                (has_root_marker, next(
+                    (marker for marker in self.options.root_markers if marker.casefold() in names),
+                    "root PHP marker",
+                )),
+            ) if present)
+            self._emit_trace(DiscoveryTrace(
+                directory, depth, "wordpress_found" if not missing else "inspected",
+                len(entries), children, found, missing,
+            ))
+            if score > best_score:
+                best_path, best_score, best_missing = directory, score, missing
+            wordpress = not missing
             if wordpress:
                 content = content_entry.path
                 uploads = self._first_existing(content, self.options.uploads_names)
@@ -91,14 +149,36 @@ class SiteDiscoverer:
                     uploads, themes, plugins,
                     bool(plugins and self.server.exists(safe_join(plugins, "woocommerce"))),
                     bool(plugins and self.server.exists(safe_join(plugins, "elementor"))),
+                    directory, (), len(visited), tuple(empty_directories),
                 )
             if depth < self.options.max_depth:
+                for entry in entries:
+                    if entry.is_directory and entry.name.casefold() in ignored:
+                        self._emit_trace(DiscoveryTrace(
+                            entry.path, depth + 1, "skipped_non_web_directory"
+                        ))
                 children = sorted(
-                    (entry for entry in entries if entry.is_directory and (self.options.follow_symlinks or not entry.is_symlink)),
+                    (entry for entry in entries if entry.is_directory
+                     and entry.name.casefold() not in ignored
+                     and (self.options.follow_symlinks or not entry.is_symlink)),
                     key=lambda entry: self._priority(entry.name),
                 )
                 queue.extend((entry.path, depth + 1) for entry in children)
-        return SiteDiscovery(root, None, False)
+        return SiteDiscovery(
+            root, None, False, missing_markers=best_missing,
+            closest_path=best_path, directories_checked=len(visited),
+            empty_directories=tuple(empty_directories),
+        )
+
+    def _emit_trace(self, trace: DiscoveryTrace) -> None:
+        if self.trace is None or self._trace_count >= self.options.max_trace_directories:
+            return
+        self._trace_count += 1
+        try:
+            self.trace(trace)
+        except Exception:
+            # Diagnostics must never interrupt read-only discovery.
+            return
 
     def _first_existing(self, parent: str, names: tuple[str, ...]) -> str | None:
         for name in names:
@@ -117,11 +197,13 @@ class RemoteImageScanner:
     """Yields metadata lazily and never downloads image bodies."""
 
     def __init__(self, server: RemoteServer, *, follow_symlinks: bool = False,
-                 max_directories: int = 100_000, inspect_dimensions: bool = True) -> None:
+                 max_directories: int = 100_000, inspect_dimensions: bool = True,
+                 directory_progress: Callable[[str, int], None] | None = None) -> None:
         self.server = server
         self.follow_symlinks = follow_symlinks
         self.max_directories = max_directories
         self.inspect_dimensions = inspect_dimensions
+        self.directory_progress = directory_progress
 
     def scan(self, root: str):
         queue = deque([normalize_remote_path(root)])
@@ -132,6 +214,8 @@ class RemoteImageScanner:
             if key in visited:
                 continue
             visited.add(key)
+            if self.directory_progress:
+                self.directory_progress(directory, len(visited))
             try:
                 entries = self.server.list(directory)
             except (PermissionError, PermissionDenied):

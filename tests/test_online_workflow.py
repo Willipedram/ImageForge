@@ -23,6 +23,8 @@ class FakeServer(RemoteServer):
         self.directories = {"/", "/site", "/site/wp-admin", "/site/wp-includes", "/site/wp-content",
                             "/site/wp-content/uploads", "/site/wp-content/uploads/2026"}
         self._connected = False; self.checksums = checksums; self.fail_upload_once = False; self.truncate_upload = False
+        self.prefix_reads = 0
+        self.download_paths = []
 
     @property
     def connected(self): return self._connected
@@ -42,6 +44,7 @@ class FakeServer(RemoteServer):
         if path in self.directories: return RemoteEntry(path, PurePosixPath(path).name, True)
         data = self.files[path]; return RemoteEntry(path, PurePosixPath(path).name, False, len(data))
     def download(self, remote_path, destination):
+        self.download_paths.append(remote_path)
         data = self.files[remote_path]
         if hasattr(destination, "write"): destination.write(data)
         else: Path(destination).write_bytes(data)
@@ -56,7 +59,9 @@ class FakeServer(RemoteServer):
     def mkdir(self, path): self.directories.add(path)
     def checksum(self, path, algorithm="sha256"):
         return hashlib.sha256(self.files[path]).hexdigest() if self.checksums and path in self.files else None
-    def read_prefix(self, path, maximum_bytes): return self.files[path][:maximum_bytes]
+    def read_prefix(self, path, maximum_bytes):
+        self.prefix_reads += 1
+        return self.files[path][:maximum_bytes]
 
 
 class FakeOptimizer:
@@ -107,6 +112,50 @@ def test_full_online_pipeline_preserves_original_and_persists_manifest(online):
     assert item.upload_status == "UPLOADED" and item.database_status == "UPDATED"
     assert {"Downloading", "Optimizing", "Uploading / Verifying", "Final verify"} <= set(stages)
     assert workflow.engine.repository.get(job_id).status is JobStatus.COMPLETED
+
+
+def test_scan_only_populates_remote_inventory_without_downloading_or_writing(online):
+    workflow, server, updater, _ = online
+    before_files = dict(server.files)
+    job_id = workflow.create("scan-only.test", "/")
+    stages = []
+    report = workflow.scan_only(job_id, lambda stage, done, total, item: stages.append(stage))
+    assert report.total == 1
+    assert next(workflow.manifest(job_id)).status is OnlineItemStatus.DISCOVERED
+    assert workflow.engine.repository.get(job_id).status is JobStatus.PAUSED
+    assert "Scanning website" in stages
+    assert "Scanning folder" in stages
+    assert server.files == before_files and not updater.prepared and not updater.applied
+    assert server.prefix_reads == 0
+
+
+def test_public_http_download_is_preferred_after_ftp_inventory(online):
+    workflow, server, _, _ = online
+    urls = []
+
+    def public_download(url, destination):
+        urls.append(url)
+        destination.write_bytes(b"original-jpeg")
+
+    workflow.public_base_url = "https://example.test"
+    workflow.public_downloader = public_download
+    job_id = workflow.create("example.test", "/")
+    workflow.run(job_id)
+
+    assert urls == ["https://example.test/wp-content/uploads/2026/photo.jpg"]
+    assert "/site/wp-content/uploads/2026/photo.jpg" not in server.download_paths
+
+
+def test_public_download_mismatch_safely_falls_back_to_ftp(online):
+    workflow, server, _, _ = online
+    workflow.public_base_url = "https://example.test"
+    workflow.public_downloader = lambda _url, destination: destination.write_bytes(b"wrong")
+    job_id = workflow.create("example.test", "/")
+
+    report = workflow.run(job_id)
+
+    assert report.failed == 0
+    assert "/site/wp-content/uploads/2026/photo.jpg" in server.download_paths
 
 
 def test_upload_retries_without_touching_original(online):

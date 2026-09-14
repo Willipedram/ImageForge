@@ -58,7 +58,10 @@ class WindowsCredentialProvider:
             "Type": self.backend.CRED_TYPE_GENERIC,
             "TargetName": self._target(credential_id),
             "UserName": credentials.username,
-            "CredentialBlob": credentials.password.encode("utf-16-le"),
+            # pywin32's CredWrite wrapper accepts Unicode text and performs
+            # the native UTF-16 conversion itself. Passing bytes raises
+            # "Objects of type 'bytes' can not be converted to Unicode".
+            "CredentialBlob": credentials.password,
             "Persist": self.backend.CRED_PERSIST_LOCAL_MACHINE,
             "Comment": "ImageForge secure runtime credential",
         }
