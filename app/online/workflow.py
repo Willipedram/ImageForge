@@ -151,7 +151,27 @@ class OnlineWorkflow:
         self.engine.transition(job_id, JobStatus.SCANNING)
         batch: list[OnlineItem] = []
         scanned = 0
-        scanner = RemoteImageScanner(_RetryingServer(self))
+        directories_scanned = 0
+        scan_started = time.monotonic()
+
+        def directory_progress(path: str, directories: int) -> None:
+            nonlocal directories_scanned
+            directories_scanned = directories
+            logger.info(
+                "Website scan visiting directory=%s directories=%d images=%d",
+                path,
+                directories,
+                scanned,
+            )
+            self._progress(progress, "Scanning folder", scanned, 0, path)
+
+        # Inventory mode needs paths and byte sizes only. Reading 64 KiB from
+        # every image adds an FTP round trip and makes large sites appear hung.
+        scanner = RemoteImageScanner(
+            _RetryingServer(self),
+            inspect_dimensions=False,
+            directory_progress=directory_progress,
+        )
         # Scanner is lazy and stores batches rather than retaining the site inventory.
         for remote in scanner.scan(discovery.uploads):
             if not self._may_continue(job_id): break
@@ -166,6 +186,12 @@ class OnlineWorkflow:
         total = self.repository.count(job_id)
         self._progress(progress, "Scanning website", total, total, discovery.uploads)
         originals = sum(i.original_bytes for i in self.repository.iter_items(job_id))
+        logger.info(
+            "Website inventory completed directories=%d images=%d elapsed_seconds=%.2f",
+            directories_scanned,
+            total,
+            time.monotonic() - scan_started,
+        )
         self.engine.update_statistics(job_id, files_total=total, files_completed=0,
                                       original_bytes=originals, optimized_bytes=0, progress=0)
         self._checkpoint(job_id, "online_scan_complete", payload={"total": total})

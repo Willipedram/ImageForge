@@ -39,6 +39,8 @@ def test_main_window_constructs(tmp_path, qapp):
         SiteDiscovery("/", "/", True, uploads="/wp-content/uploads"),
     )
     assert window.scan_page.online.stage.text().startswith("Ready to scan")
+    assert window.navigation.currentRow() == 2
+    assert window.scan_page.tabs.currentWidget() is window.scan_page.online
     window.close()
 
 

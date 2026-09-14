@@ -197,11 +197,13 @@ class RemoteImageScanner:
     """Yields metadata lazily and never downloads image bodies."""
 
     def __init__(self, server: RemoteServer, *, follow_symlinks: bool = False,
-                 max_directories: int = 100_000, inspect_dimensions: bool = True) -> None:
+                 max_directories: int = 100_000, inspect_dimensions: bool = True,
+                 directory_progress: Callable[[str, int], None] | None = None) -> None:
         self.server = server
         self.follow_symlinks = follow_symlinks
         self.max_directories = max_directories
         self.inspect_dimensions = inspect_dimensions
+        self.directory_progress = directory_progress
 
     def scan(self, root: str):
         queue = deque([normalize_remote_path(root)])
@@ -212,6 +214,8 @@ class RemoteImageScanner:
             if key in visited:
                 continue
             visited.add(key)
+            if self.directory_progress:
+                self.directory_progress(directory, len(visited))
             try:
                 entries = self.server.list(directory)
             except (PermissionError, PermissionDenied):

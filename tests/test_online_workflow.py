@@ -23,6 +23,7 @@ class FakeServer(RemoteServer):
         self.directories = {"/", "/site", "/site/wp-admin", "/site/wp-includes", "/site/wp-content",
                             "/site/wp-content/uploads", "/site/wp-content/uploads/2026"}
         self._connected = False; self.checksums = checksums; self.fail_upload_once = False; self.truncate_upload = False
+        self.prefix_reads = 0
 
     @property
     def connected(self): return self._connected
@@ -56,7 +57,9 @@ class FakeServer(RemoteServer):
     def mkdir(self, path): self.directories.add(path)
     def checksum(self, path, algorithm="sha256"):
         return hashlib.sha256(self.files[path]).hexdigest() if self.checksums and path in self.files else None
-    def read_prefix(self, path, maximum_bytes): return self.files[path][:maximum_bytes]
+    def read_prefix(self, path, maximum_bytes):
+        self.prefix_reads += 1
+        return self.files[path][:maximum_bytes]
 
 
 class FakeOptimizer:
@@ -119,7 +122,9 @@ def test_scan_only_populates_remote_inventory_without_downloading_or_writing(onl
     assert next(workflow.manifest(job_id)).status is OnlineItemStatus.DISCOVERED
     assert workflow.engine.repository.get(job_id).status is JobStatus.PAUSED
     assert "Scanning website" in stages
+    assert "Scanning folder" in stages
     assert server.files == before_files and not updater.prepared and not updater.applied
+    assert server.prefix_reads == 0
 
 
 def test_upload_retries_without_touching_original(online):

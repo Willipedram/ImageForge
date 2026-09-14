@@ -83,6 +83,9 @@ class ServerConnectionPage(QWidget):
         heading = QLabel("Server Connection")
         heading.setObjectName("pageHeading")
         root.addWidget(heading)
+        guide = QLabel("Step 1 of 3 — enter FTP details and verify the WordPress site")
+        guide.setObjectName("pageSubtitle")
+        root.addWidget(guide)
         root.addWidget(QLabel("Test secure access and discover the website without downloading image bodies."))
         access_note = QLabel(
             "DirectAdmin panel access is not a file-transfer connection. Use an FTP/FTPS account "

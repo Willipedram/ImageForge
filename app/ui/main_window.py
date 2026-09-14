@@ -190,7 +190,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.server_page)
         if engine:
             self.scan_page = ScanPage(Path(settings.project_data_path), engine, settings, self._resources)
-            self.server_page.connection_verified.connect(self.scan_page.online.configure_connection)
+            self.server_page.connection_verified.connect(self._continue_to_website_scan)
             self.pages.addWidget(self.scan_page)
         else:
             self.pages.addWidget(PlaceholderPage("Scan", "Job engine is not connected."))
@@ -222,6 +222,13 @@ class MainWindow(QMainWindow):
             monitor.snapshot.connect(self.dashboard.update_snapshot)
             monitor.failed.connect(lambda message: self.statusBar().showMessage(message, 5000))
             self._monitor_thread, self._monitor = thread, monitor; thread.start()
+
+    def _continue_to_website_scan(self, config, credentials, discovery) -> None:
+        """Move the user to the next guided step after connection verification."""
+        self.scan_page.online.configure_connection(config, credentials, discovery)
+        self.scan_page.tabs.setCurrentWidget(self.scan_page.online)
+        self.navigation.setCurrentRow(2)
+        self.statusBar().showMessage("Step 2 of 3 — click Scan website", 8000)
 
     def _save_settings(self, settings: AppSettings) -> None:
         self.store.save(settings)
